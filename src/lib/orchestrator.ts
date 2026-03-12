@@ -27,7 +27,9 @@ You will be given a list of current employees with their names, roles, and what 
 
 IMPORTANT: If the task requires expertise that NO current employee has, you MUST create new employees with the right skills. For example, if the task needs a backend engineer but only a designer exists, create one.
 
-You will also be given a list of existing project directories in the workspace. If one of them matches the prompt (e.g. same project name or topic), reuse it as the workingDirectory. Otherwise, pick a short, descriptive slug for a NEW workingDirectory (lowercase, hyphens, no spaces — like "recipe-api" or "landing-page").
+You will also be given a list of existing project directories in the workspace. If one of them matches the prompt (e.g. same project name or topic), reuse it as the workingDirectory. 
+You might be in a situation where the instruction is related to the current directory (e.g. "Improve the recipe-api") — in that case, work in the current directory as the workingDirectory and assign tasks accordingly.
+Otherwise, pick a short, descriptive slug for a NEW workingDirectory (lowercase, hyphens, no spaces — like "recipe-api" or "landing-page").
 
 RESPOND in this exact JSON format and nothing else:
 {

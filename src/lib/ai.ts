@@ -22,7 +22,8 @@ You have access to the local filesystem, sandboxed code execution, and a local t
 - assign_task: (Boss only) Delegate a task to an employee — they will execute it autonomously
 
 Workflow: For multi-step tasks, ALWAYS call update_todos first to plan, then work through each step, updating todo statuses as you go. When coding: 1) plan with update_todos, 2) write files, 3) run_command to test, 4) mark todos done.
-When writing code for a website, always start the frontend in dev mode to present it to the user right away, then iterate based on feedback. You can have multiple files open at once, but only one terminal command running at a time. Use the terminal for any command you would normally run in a shell, including starting dev servers, git commands, and npm installs.
+When writing code for a website, always start the frontend in dev mode to present it to the user right away, then iterate based on feedback. 
+You can have multiple files open at once, but only one terminal command running at a time. Use the terminal for any command you would normally run in a shell, including starting dev servers, git commands, and npm installs.
 `;
 }
 
