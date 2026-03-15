@@ -1,6 +1,6 @@
 import { Agent, AgentSkill, AgentTodo, ApiKeys, Message } from './types';
 import { sendMessage } from './ai';
-import { listFiles, writeFile } from './filesystem';
+import { listFiles, listAllFiles, readFile, writeFile } from './filesystem';
 
 export interface NewAgentSpec {
   name: string;
@@ -21,15 +21,19 @@ export interface OrchestrationResult {
   workingDirectory: string;
 }
 
+// If one of the existing directories matches the prompt (e.g. same project name or topic), reuse it as the workingDirectory. 
+// You might be in a situation where the instruction is related to the current directory (e.g. "Improve the recipe-api") — in that case, work in the current directory as the workingDirectory and assign tasks accordingly.
+// Otherwise, pick a short, descriptive slug for a NEW workingDirectory (lowercase, hyphens, no spaces — like "recipe-api" or "landing-page").
+
+
 const ROUTER_SYSTEM = `You are the Office Manager. You receive high-level instructions and break them into tasks assigned to specific employees.
 
 You will be given a list of current employees with their names, roles, and what they're good at. Given the user's instruction, decide which employee(s) should handle which part of the work. Not Every employee needs to be assigned a task — only assign relevant ones. You can also create new employees if needed (see below).
 
 IMPORTANT: If the task requires expertise that NO current employee has, you MUST create new employees with the right skills. For example, if the task needs a backend engineer but only a designer exists, create one.
 
-You will also be given a list of existing project directories in the workspace. If one of them matches the prompt (e.g. same project name or topic), reuse it as the workingDirectory. 
-You might be in a situation where the instruction is related to the current directory (e.g. "Improve the recipe-api") — in that case, work in the current directory as the workingDirectory and assign tasks accordingly.
-Otherwise, pick a short, descriptive slug for a NEW workingDirectory (lowercase, hyphens, no spaces — like "recipe-api" or "landing-page").
+You will also be given a list of existing project directories in the workspace AND the contents of key files. Use the file contents to understand what already exists — this is critical for making informed routing decisions. For example, if the project already has a package.json, you know the tech stack; if it has certain source files, you can assign tasks that build on them rather than starting from scratch.
+
 
 RESPOND in this exact JSON format and nothing else:
 {
@@ -75,7 +79,34 @@ export async function routeTasks(
     ? `## Existing project directories\n${dirList.map((d) => `- ${d}`).join('\n')}`
     : '## Existing project directories\n(none)';
 
-  const prompt = `## Employees\n${employeeList}\n\n${dirsSection}\n\n## Instruction\n${instruction}`;
+  // Read all files in the workspace so the router can understand existing code
+  const MAX_FILE_SIZE = 12_000; // skip very large files to stay within context
+  const MAX_TOTAL_CHARS = 80_000; // cap total included content
+  const allFiles = await listAllFiles();
+  let totalChars = 0;
+  const fileContents: string[] = [];
+  for (const meta of allFiles) {
+    if (meta.size > MAX_FILE_SIZE) {
+      fileContents.push(`### ${meta.path}\n(skipped — ${meta.size} bytes, too large)`);
+      continue;
+    }
+    if (totalChars + meta.size > MAX_TOTAL_CHARS) {
+      fileContents.push(`### ${meta.path}\n(skipped — total context limit reached)`);
+      continue;
+    }
+    const content = await readFile(meta.path);
+    if (content.startsWith('Error:')) {
+      fileContents.push(`### ${meta.path}\n(could not read)`);
+      continue;
+    }
+    fileContents.push(`### ${meta.path}\n\`\`\`\n${content}\n\`\`\``);
+    totalChars += content.length;
+  }
+  const filesSection = fileContents.length > 0
+    ? `## Workspace files\n${fileContents.join('\n\n')}`
+    : '## Workspace files\n(empty workspace)';
+
+  const prompt = `## Employees\n${employeeList}\n\n${dirsSection}\n\n${filesSection}\n\n## Instruction\n${instruction}`;
 
   // Create a temporary "router" agent
   const routerAgent: Agent = {
