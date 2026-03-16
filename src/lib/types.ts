@@ -51,7 +51,7 @@ export interface ToolCall {
   result: string;
 }
 
-export type AgentStatus = 'idle' | 'thinking' | 'working' | 'speaking';
+export type AgentStatus = 'idle' | 'thinking' | 'working' | 'speaking' | 'waiting-input' | 'waiting-approval' | 'stuck';
 
 export type AgentScope = 'user' | 'project';
 

@@ -13,6 +13,7 @@ import {
 
 interface TerminalPanelProps {
   agents: Agent[];
+  workspaceDir?: string | null;
 }
 
 type TabMode = 'terminal' | 'files';
@@ -85,10 +86,10 @@ function fileIcon(name: string): string {
 
 let lineIdCounter = 0;
 
-export default function TerminalPanel({ agents }: TerminalPanelProps) {
+export default function TerminalPanel({ agents, workspaceDir: wsDirProp }: TerminalPanelProps) {
   const [mode, setMode] = useState<TabMode>('terminal');
   const [files, setFiles] = useState<FileMeta[]>([]);
-  const [workspace, setWorkspaceDir] = useState<string>('');
+  const [workspace, setWorkspaceDir] = useState<string>(wsDirProp || '');
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [expandedFileContent, setExpandedFileContent] = useState<string | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -116,10 +117,14 @@ export default function TerminalPanel({ agents }: TerminalPanelProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [lines]);
 
-  // Load workspace path
+  // Sync workspace from parent prop; fall back to getWorkspace() if no prop
   useEffect(() => {
-    getWorkspace().then(setWorkspaceDir);
-  }, []);
+    if (wsDirProp) {
+      setWorkspaceDir(wsDirProp);
+    } else {
+      getWorkspace().then(setWorkspaceDir);
+    }
+  }, [wsDirProp]);
 
   // Refresh files periodically (only when files tab is active)
   useEffect(() => {

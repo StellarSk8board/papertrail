@@ -27,9 +27,20 @@ interface ElectronFsAPI {
   getAllFiles: () => Promise<FileEntry[]>;
 }
 
+interface PermissionsAPI {
+  check: (dirPath: string) => Promise<{ ok: boolean; exists?: boolean; writable?: boolean; readable?: boolean; error?: string }>;
+  repair: (dirPath: string) => Promise<{ ok: boolean; issues?: { path: string; fixed: boolean; type: string; error?: string }[]; created?: boolean; error?: string }>;
+  ensureDir: (dirPath: string) => Promise<{ ok: boolean; error?: string }>;
+}
+
 function getElectronFs(): ElectronFsAPI | null {
   const w = window as unknown as { electronAPI?: { isElectron: boolean; fs: ElectronFsAPI } };
   return w.electronAPI?.isElectron ? w.electronAPI.fs : null;
+}
+
+function getPermissionsAPI(): PermissionsAPI | null {
+  const w = window as unknown as { electronAPI?: { isElectron: boolean; permissions: PermissionsAPI } };
+  return w.electronAPI?.isElectron ? w.electronAPI.permissions : null;
 }
 
 export function isRealFs(): boolean {
@@ -165,4 +176,24 @@ function fallbackDelete(p: string): string {
 
 function fallbackGetAll(): FileEntry[] {
   return [...fallbackLoad().values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+// ─── Permissions ──────────────────────────────────────────────────
+
+export async function checkPermissions(dirPath: string) {
+  const api = getPermissionsAPI();
+  if (!api) return { ok: true, exists: true, writable: true, readable: true };
+  return api.check(dirPath);
+}
+
+export async function repairPermissions(dirPath: string) {
+  const api = getPermissionsAPI();
+  if (!api) return { ok: true, issues: [] };
+  return api.repair(dirPath);
+}
+
+export async function ensureDirectory(dirPath: string) {
+  const api = getPermissionsAPI();
+  if (!api) return { ok: true };
+  return api.ensureDir(dirPath);
 }

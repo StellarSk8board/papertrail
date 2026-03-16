@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     startAdvanced: (options) =>
       ipcRenderer.invoke("claude-code:startAdvanced", options),
     abort: (reqId) => ipcRenderer.invoke("claude-code:abort", reqId),
+    sendInput: (reqId, text) =>
+      ipcRenderer.invoke("claude-code:sendInput", reqId, text),
     onChunk: (cb) => {
       const listener = (_event, reqId, data) => cb(reqId, data);
       ipcRenderer.on("claude-code:chunk", listener);
@@ -100,5 +102,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Music
   music: {
     listTracks: () => ipcRenderer.invoke("music:listTracks"),
+  },
+
+  // Permissions
+  permissions: {
+    check: (dirPath) => ipcRenderer.invoke("permissions:check", dirPath),
+    repair: (dirPath) => ipcRenderer.invoke("permissions:repair", dirPath),
+    ensureDir: (dirPath) =>
+      ipcRenderer.invoke("permissions:ensureDir", dirPath),
+  },
+
+  // Claude Code settings & permissions config
+  claudeSettings: {
+    read: (scope) => ipcRenderer.invoke("claude-settings:read", scope),
+    write: (scope, settings) =>
+      ipcRenderer.invoke("claude-settings:write", scope, settings),
+    readClaudeMd: () => ipcRenderer.invoke("claude-settings:readClaudeMd"),
+    writeClaudeMd: (content) =>
+      ipcRenderer.invoke("claude-settings:writeClaudeMd", content),
   },
 });

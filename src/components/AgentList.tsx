@@ -12,6 +12,19 @@ const STATUS_COLORS: Record<string, string> = {
   thinking: '#f59e0b',
   working: '#22c55e',
   speaking: '#3b82f6',
+  'waiting-input': '#f97316',
+  'waiting-approval': '#eab308',
+  stuck: '#ef4444',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  idle: 'Idle',
+  thinking: 'Thinking…',
+  working: 'Working…',
+  speaking: 'Responding…',
+  'waiting-input': '⏸ Needs input',
+  'waiting-approval': '🔒 Needs approval',
+  stuck: '⚠ Stuck',
 };
 
 export default function AgentList({ agents, selectedAgentId, onSelect, onAdd }: AgentListProps) {
@@ -52,12 +65,21 @@ export default function AgentList({ agents, selectedAgentId, onSelect, onAdd }: 
               </p>
               <p className="text-[12px] font-pixel truncate" style={{ color: agent.color + 'cc' }}>{agent.role}</p>
             </div>
-            {/* Status dot */}
-            <div
-              className="w-2 h-2 rounded-full shrink-0"
-              style={{ backgroundColor: STATUS_COLORS[agent.status] ?? '#6b7280' }}
-              title={agent.status}
-            />
+            {/* Status dot + label for attention states */}
+            <div className="flex items-center gap-1 shrink-0">
+              {(agent.status === 'waiting-input' || agent.status === 'waiting-approval' || agent.status === 'stuck') && (
+                <span
+                  className={`text-[8px] font-pixel leading-none px-1 py-0.5 rounded ${agent.status === 'stuck' ? 'bg-red-900/60 text-red-300 animate-pulse' : 'bg-amber-900/60 text-amber-300 animate-pulse'}`}
+                >
+                  {STATUS_LABELS[agent.status]}
+                </span>
+              )}
+              <div
+                className={`w-2 h-2 rounded-full ${agent.status === 'waiting-input' || agent.status === 'waiting-approval' || agent.status === 'stuck' ? 'animate-pulse' : ''}`}
+                style={{ backgroundColor: STATUS_COLORS[agent.status] ?? '#6b7280' }}
+                title={STATUS_LABELS[agent.status] ?? agent.status}
+              />
+            </div>
           </button>
         ))}
       </div>

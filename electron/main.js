@@ -13,6 +13,108 @@ const { spawn } = require("child_process");
 
 let mainWindow = null;
 
+// ─── Permission helpers ─────────────────────────────────────────
+// Set a permissive umask so directories and files created by Electron
+// (and inherited by Claude Code child processes) are owner+group
+// read/write/execute.  Electron launched from Finder/Dock may inherit
+// a restrictive umask (e.g. 0o077) that prevents Claude Code from
+// writing to directories we create and vice-versa.
+process.umask(0o022); // dirs → 755, files → 644
+
+const DIR_MODE = 0o755;
+const FILE_MODE = 0o644;
+
+/**
+ * Ensure a directory exists AND is writable by the current user.
+ * If the directory exists but isn't writable, attempt to repair.
+ */
+function ensureDirWritable(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true, mode: DIR_MODE });
+  } catch (err) {
+    // EEXIST is fine; anything else is a real problem
+    if (err.code !== "EEXIST") throw err;
+  }
+  // Verify we can actually write
+  try {
+    fs.accessSync(dirPath, fs.constants.W_OK | fs.constants.R_OK);
+  } catch {
+    // Attempt to repair permissions
+    try {
+      fs.chmodSync(dirPath, DIR_MODE);
+    } catch (chmodErr) {
+      console.error(
+        `Cannot repair permissions on ${dirPath}:`,
+        chmodErr.message,
+      );
+    }
+  }
+}
+
+/**
+ * Walk a directory tree and fix any directories/files that aren't
+ * read+write accessible by the current user.  Non-recursive by default
+ * (depth = 1); pass a higher depth for full repair.
+ */
+function repairPermissions(rootDir, maxDepth = 10) {
+  const issues = [];
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      // Can't even read the directory — try to fix it
+      try {
+        fs.chmodSync(dir, DIR_MODE);
+        issues.push({ path: dir, fixed: true, type: "dir" });
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        issues.push({
+          path: dir,
+          fixed: false,
+          type: "dir",
+          error: err.message,
+        });
+        return;
+      }
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          try {
+            fs.accessSync(
+              full,
+              fs.constants.W_OK | fs.constants.R_OK | fs.constants.X_OK,
+            );
+          } catch {
+            fs.chmodSync(full, DIR_MODE);
+            issues.push({ path: full, fixed: true, type: "dir" });
+          }
+          walk(full, depth + 1);
+        } else {
+          try {
+            fs.accessSync(full, fs.constants.W_OK | fs.constants.R_OK);
+          } catch {
+            fs.chmodSync(full, FILE_MODE);
+            issues.push({ path: full, fixed: true, type: "file" });
+          }
+        }
+      } catch (err) {
+        issues.push({
+          path: full,
+          fixed: false,
+          type: entry.isDirectory() ? "dir" : "file",
+          error: err.message,
+        });
+      }
+    }
+  }
+  walk(rootDir, 0);
+  return issues;
+}
+
 // Detect available shell — prefer $SHELL, then zsh, bash, sh
 function getShellCmd() {
   if (process.platform === "win32") return "cmd.exe";
@@ -150,9 +252,9 @@ function setupShellIPC() {
 
       const execCwd = cwd || process.env.HOME;
 
-      // Ensure the working directory exists before spawning
+      // Ensure the working directory exists and is writable before spawning
       try {
-        fs.mkdirSync(execCwd, { recursive: true });
+        ensureDirWritable(execCwd);
       } catch {
         /* best-effort */
       }
@@ -228,7 +330,7 @@ function setupShellIPC() {
 
       const execCwd = cwd || process.env.HOME;
       try {
-        fs.mkdirSync(execCwd, { recursive: true });
+        ensureDirWritable(execCwd);
       } catch {
         /* best-effort */
       }
@@ -333,7 +435,7 @@ function setupShellIPC() {
     const reqId = ++claudeReqId;
     const execCwd = options.cwd || process.env.HOME;
     try {
-      fs.mkdirSync(execCwd, { recursive: true });
+      ensureDirWritable(execCwd);
     } catch {
       /* best-effort */
     }
@@ -386,12 +488,13 @@ function setupShellIPC() {
       args.push("--max-budget-usd", String(options.maxBudget));
     }
 
-    // Session management
-    if (options.continueSession) {
-      args.push("--continue");
-    }
+    // Session management — prefer --resume with explicit ID over --continue,
+    // since --continue only reconnects the most recent session which may not
+    // match what the UI expects.
     if (options.resumeSessionId) {
       args.push("--resume", options.resumeSessionId);
+    } else if (options.continueSession) {
+      args.push("--continue");
     }
 
     // Subagent definitions (JSON)
@@ -460,9 +563,13 @@ function setupShellIPC() {
 
     claudeProcs.set(reqId, proc);
 
-    // Pipe prompt through stdin
+    // Pipe prompt through stdin — then close it so Claude gets EOF and
+    // starts processing. Permission responses use accept/deny rules in
+    // settings.json rather than interactive stdin, since -p mode reads
+    // until EOF for the prompt.
     if (options.prompt) {
       proc.stdin.write(options.prompt);
+      proc.stdin.write("\n");
     }
     proc.stdin.end();
 
@@ -506,6 +613,16 @@ function setupShellIPC() {
     });
 
     return reqId;
+  });
+
+  // Send input to a running advanced Claude Code session (e.g. permission responses)
+  ipcMain.handle("claude-code:sendInput", (_event, reqId, text) => {
+    const proc = claudeProcs.get(reqId);
+    if (proc && !proc.killed && proc.stdin && proc.stdin.writable) {
+      proc.stdin.write(text);
+      return true;
+    }
+    return false;
   });
 
   // List available subagents from the claude CLI
@@ -733,8 +850,11 @@ function setupShellIPC() {
           error: "Can only write to .claude/agents/ directories",
         };
       }
-      fs.mkdirSync(path.dirname(normalized), { recursive: true });
-      fs.writeFileSync(normalized, content, "utf-8");
+      ensureDirWritable(path.dirname(normalized));
+      fs.writeFileSync(normalized, content, {
+        encoding: "utf-8",
+        mode: FILE_MODE,
+      });
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -780,7 +900,7 @@ function setupShellIPC() {
 
   function watchAgentDir(dir) {
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      ensureDirWritable(dir);
       const watcher = fs.watch(
         dir,
         { persistent: false },
@@ -817,7 +937,7 @@ function setupShellIPC() {
     const dir = path.join(projectDir, ".claude", "agents");
     if (path.resolve(dir) === path.resolve(userAgentDir)) return;
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      ensureDirWritable(dir);
       projectAgentWatcher = fs.watch(
         dir,
         { persistent: false },
@@ -861,7 +981,7 @@ app.on("before-quit", () => {
 let workspaceDir = path.join(process.env.HOME || "", "outworked-workspace");
 
 function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
+  ensureDirWritable(dirPath);
 }
 
 function resolveSafe(relativePath) {
@@ -880,6 +1000,12 @@ function setupFilesystemIPC() {
   ipcMain.handle("fs:setWorkspace", (_event, dir) => {
     workspaceDir = dir;
     ensureDir(workspaceDir);
+    // Verify the workspace is fully accessible after switching
+    try {
+      fs.accessSync(workspaceDir, fs.constants.W_OK | fs.constants.R_OK);
+    } catch {
+      repairPermissions(workspaceDir, 1);
+    }
     return workspaceDir;
   });
 
@@ -897,7 +1023,7 @@ function setupFilesystemIPC() {
   ipcMain.handle("fs:writeFile", (_event, relPath, content) => {
     const abs = resolveSafe(relPath);
     ensureDir(path.dirname(abs));
-    fs.writeFileSync(abs, content, "utf-8");
+    fs.writeFileSync(abs, content, { encoding: "utf-8", mode: FILE_MODE });
     return { ok: true, bytes: Buffer.byteLength(content, "utf-8") };
   });
 
@@ -1157,6 +1283,136 @@ function readTitle(filePath) {
   return null;
 }
 
+// ─── Permissions IPC ──────────────────────────────────────────────
+function setupPermissionsIPC() {
+  // Check if a path is writable
+  ipcMain.handle("permissions:check", (_event, dirPath) => {
+    try {
+      const resolved = path.resolve(dirPath);
+      if (!fs.existsSync(resolved)) {
+        return { ok: false, exists: false, writable: false, readable: false };
+      }
+      let writable = false;
+      let readable = false;
+      try {
+        fs.accessSync(resolved, fs.constants.W_OK);
+        writable = true;
+      } catch {
+        /* not writable */
+      }
+      try {
+        fs.accessSync(resolved, fs.constants.R_OK);
+        readable = true;
+      } catch {
+        /* not readable */
+      }
+      return { ok: true, exists: true, writable, readable };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Repair permissions on a directory tree (workspace or agent dirs)
+  ipcMain.handle("permissions:repair", (_event, dirPath) => {
+    try {
+      const resolved = path.resolve(dirPath);
+      if (!fs.existsSync(resolved)) {
+        ensureDirWritable(resolved);
+        return { ok: true, issues: [], created: true };
+      }
+      const issues = repairPermissions(resolved);
+      return { ok: true, issues, created: false };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Ensure a specific directory exists and is writable
+  ipcMain.handle("permissions:ensureDir", (_event, dirPath) => {
+    try {
+      const resolved = path.resolve(dirPath);
+      ensureDirWritable(resolved);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // ─── Claude Code settings.json management ────────────────────────
+
+  // Read Claude settings.json (global or project-level)
+  // scope: 'global' → ~/.claude/settings.json
+  // scope: 'project' → <workspace>/.claude/settings.json
+  ipcMain.handle("claude-settings:read", (_event, scope) => {
+    try {
+      const home = process.env.HOME || "";
+      const filePath =
+        scope === "project"
+          ? path.join(workspaceDir, ".claude", "settings.json")
+          : path.join(home, ".claude", "settings.json");
+      if (!fs.existsSync(filePath)) {
+        return { ok: true, settings: {}, exists: false };
+      }
+      const content = fs.readFileSync(filePath, "utf-8");
+      return { ok: true, settings: JSON.parse(content), exists: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Write Claude settings.json
+  ipcMain.handle("claude-settings:write", (_event, scope, settings) => {
+    try {
+      const home = process.env.HOME || "";
+      const filePath =
+        scope === "project"
+          ? path.join(workspaceDir, ".claude", "settings.json")
+          : path.join(home, ".claude", "settings.json");
+      ensureDirWritable(path.dirname(filePath));
+      fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), {
+        encoding: "utf-8",
+        mode: FILE_MODE,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // ─── CLAUDE.md management ────────────────────────────────────────
+
+  // Read CLAUDE.md from workspace root
+  ipcMain.handle("claude-settings:readClaudeMd", () => {
+    try {
+      const filePath = path.join(workspaceDir, "CLAUDE.md");
+      if (!fs.existsSync(filePath)) {
+        return { ok: true, content: "", exists: false };
+      }
+      return {
+        ok: true,
+        content: fs.readFileSync(filePath, "utf-8"),
+        exists: true,
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Write CLAUDE.md to workspace root
+  ipcMain.handle("claude-settings:writeClaudeMd", (_event, content) => {
+    try {
+      const filePath = path.join(workspaceDir, "CLAUDE.md");
+      fs.writeFileSync(filePath, content, {
+        encoding: "utf-8",
+        mode: FILE_MODE,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
 function setupMusicIPC() {
   ipcMain.handle("music:listTracks", () => {
     const musicDir = getMusicDir();
@@ -1273,8 +1529,16 @@ app.whenReady().then(() => {
 
   setupShellIPC();
   setupFilesystemIPC();
+  setupPermissionsIPC();
   setupMusicIPC();
   createWindow();
+
+  // On startup, ensure the default workspace is accessible
+  try {
+    ensureDirWritable(workspaceDir);
+  } catch (err) {
+    console.error("Failed to ensure workspace permissions:", err.message);
+  }
 });
 
 app.on("window-all-closed", () => {

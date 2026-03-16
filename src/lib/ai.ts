@@ -1,7 +1,7 @@
 import { Agent, AgentSkill, ApiKeys, Message, ToolCall } from './types';
 import { AGENT_TOOLS, ToolDefinition, executeTool } from './tools';
 import { getWorkspace } from './filesystem';
-import { runClaudeCode, runClaudeCodeAdvanced, ClaudeCodeAdvancedOptions, ClaudeCodeStreamCallbacks } from './terminal';
+import { runClaudeCode, runClaudeCodeAdvanced, ClaudeCodeAdvancedOptions, ClaudeCodeStreamCallbacks, PermissionRequest } from './terminal';
 
 function buildToolPreamble(workspace: string): string {
   return `
@@ -49,6 +49,8 @@ export interface SendOptions {
   extraSystemPrompt?: string; // appended to the system prompt
   customToolExecutor?: (name: string, args: Record<string, unknown>) => Promise<string | null>; // return string to override default executeTool, null to use default
   onClaudeCodeEvent?: (event: { type: string; toolName?: string; toolInput?: Record<string, unknown>; text?: string }) => void;
+  onPermissionRequest?: (request: PermissionRequest) => void;
+  onStderr?: (text: string) => void;
 }
 
 export async function sendMessage(
@@ -68,15 +70,22 @@ export async function sendMessage(
     { role: 'user', content: userMessage, timestamp: Date.now() },
   ];
 
+  // Currently only Claude Code is supported — API-key-based providers are disabled
   if (agent.provider === 'claude-code') {
-    return callClaudeCode(systemPrompt, messages, onThought, signal, agent, options?.onClaudeCodeEvent);
-  } else if (agent.provider === 'openai') {
+    return callClaudeCode(systemPrompt, messages, onThought, signal, agent, options?.onClaudeCodeEvent, options?.onPermissionRequest, options?.onStderr);
+  } else {
+    throw new Error(`Provider "${agent.provider}" is disabled. Only Claude Code (local) is supported. Switch this agent to Claude Code in the editor.`);
+  }
+
+  /* === API-key-based providers (commented out) ===
+  if (agent.provider === 'openai') {
     return callOpenAI(agent.model, systemPrompt, messages, keys.openai, onThought, signal, useTools, options?.onToolCall, options?.extraTools, options?.customToolExecutor);
   } else if (agent.provider === 'google') {
     return callGemini(agent.model, systemPrompt, messages, keys.gemini, onThought, signal, useTools, options?.onToolCall, options?.extraTools, options?.customToolExecutor);
   } else {
     return callAnthropic(agent.model, systemPrompt, messages, keys.anthropic, onThought, signal, useTools, options?.onToolCall, options?.extraTools, options?.customToolExecutor);
   }
+  */
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -114,6 +123,8 @@ async function callClaudeCode(
   signal?: AbortSignal,
   agent?: Agent,
   onClaudeCodeEvent?: SendOptions['onClaudeCodeEvent'],
+  onPermissionRequest?: SendOptions['onPermissionRequest'],
+  onStderr?: SendOptions['onStderr'],
 ): Promise<string> {
   // Build a single prompt from conversation history
   let prompt = '';
@@ -126,7 +137,7 @@ async function callClaudeCode(
 
   // Use advanced mode for subagent-backed agents (or any who have subagentDef)
   if (agent?.subagentDef) {
-    return callClaudeCodeAdvanced(prompt, system, workspace, onThought, signal, agent, onClaudeCodeEvent);
+    return callClaudeCodeAdvanced(prompt, system, workspace, onThought, signal, agent, onClaudeCodeEvent, onPermissionRequest, onStderr);
   }
 
   // Fallback: simple mode for regular claude-code agents
@@ -164,6 +175,8 @@ async function callClaudeCodeAdvanced(
   signal?: AbortSignal,
   agent?: Agent,
   onClaudeCodeEvent?: SendOptions['onClaudeCodeEvent'],
+  onPermissionRequest?: SendOptions['onPermissionRequest'],
+  onStderr?: SendOptions['onStderr'],
 ): Promise<string> {
   const subDef = agent?.subagentDef;
 
@@ -177,7 +190,7 @@ async function callClaudeCodeAdvanced(
     allowedTools: subDef?.tools,
     disallowedTools: subDef?.disallowedTools,
     maxTurns: subDef?.maxTurns,
-    permissionMode: (subDef?.permissionMode as ClaudeCodeAdvancedOptions['permissionMode']) || 'default',
+    permissionMode: (subDef?.permissionMode as ClaudeCodeAdvancedOptions['permissionMode']) || 'acceptEdits',
     continueSession: !!agent?.sessionId,
     resumeSessionId: agent?.sessionId,
   };
@@ -200,6 +213,8 @@ async function callClaudeCodeAdvanced(
     onEvent: (event) => {
       onClaudeCodeEvent?.({ type: event.type, text: typeof event.result === 'string' ? event.result : undefined });
     },
+    onStderr: onStderr,
+    onPermissionRequest: onPermissionRequest,
   };
 
   const result = await runClaudeCodeAdvanced(options, callbacks, signal);
@@ -229,6 +244,8 @@ function claudeCodeToolLabel(name: string, args: Record<string, unknown>): strin
     default: return `🔧 ${name} ${p ? `(${p.slice(0, 40)})` : ''}…`;
   }
 }
+
+/* === API-key-based providers (commented out) ===
 
 // ─── OpenAI Responses API ─────────────────────────────────────────
 
@@ -350,7 +367,7 @@ async function callOpenAI(
     if (gotFnCalls) {
       for (const [, fc] of fnCalls) {
         let parsedArgs: Record<string, string> = {};
-        try { parsedArgs = JSON.parse(fc.args); } catch { /* empty */ }
+        try { parsedArgs = JSON.parse(fc.args); } catch { // empty }
 
         // Show status
         if (fullText && !fullText.endsWith('\n')) fullText += '\n';
@@ -527,7 +544,7 @@ async function callAnthropic(
           assistantContent.push({ type: 'text', text: block.text });
         } else if (block.type === 'tool_use') {
           let parsedInput = {};
-          try { parsedInput = JSON.parse(block.inputJson ?? '{}'); } catch { /* empty */ }
+          try { parsedInput = JSON.parse(block.inputJson ?? '{}'); } catch { // empty }
           assistantContent.push({
             type: 'tool_use',
             id: block.id,
@@ -543,7 +560,7 @@ async function callAnthropic(
       const toolResults: Record<string, unknown>[] = [];
       for (const block of toolUseBlocks) {
         let parsedArgs: Record<string, string> = {};
-        try { parsedArgs = JSON.parse(block.inputJson ?? '{}'); } catch { /* empty */ }
+        try { parsedArgs = JSON.parse(block.inputJson ?? '{}'); } catch { // empty }
 
         if (fullText && !fullText.endsWith('\n')) fullText += '\n';
         fullText += `\n${toolLabel(block.name!, parsedArgs)}\n`;
@@ -707,3 +724,5 @@ async function callGemini(
 
   return fullText;
 }
+
+=== end commented-out API providers === */

@@ -905,7 +905,7 @@ export class OfficeScene extends Phaser.Scene {
     container.add(roleText);
 
     // Status indicator — pill badge
-    const statusColor = agent.status === 'thinking' ? 0xf39c12 : agent.status === 'working' ? 0x2ecc71 : agent.status === 'speaking' ? 0x3498db : 0x7f8c8d;
+    const statusColor = agent.status === 'thinking' ? 0xf39c12 : agent.status === 'working' ? 0x2ecc71 : agent.status === 'speaking' ? 0x3498db : agent.status === 'waiting-approval' ? 0xeab308 : agent.status === 'waiting-input' ? 0xf97316 : agent.status === 'stuck' ? 0xef4444 : 0x7f8c8d;
     const statusGfx = this.add.graphics();
     statusGfx.setName('statusDot');
     // Outer ring
@@ -1070,7 +1070,7 @@ export class OfficeScene extends Phaser.Scene {
     if (oldStatusGfx) {
       oldStatusGfx.destroy();
     }
-    const statusColor = agent.status === 'thinking' ? 0xf39c12 : agent.status === 'working' ? 0x2ecc71 : agent.status === 'speaking' ? 0x3498db : 0x7f8c8d;
+    const statusColor = agent.status === 'thinking' ? 0xf39c12 : agent.status === 'working' ? 0x2ecc71 : agent.status === 'speaking' ? 0x3498db : agent.status === 'waiting-approval' ? 0xeab308 : agent.status === 'waiting-input' ? 0xf97316 : agent.status === 'stuck' ? 0xef4444 : 0x7f8c8d;
     const statusGfx = this.add.graphics();
     statusGfx.setName('statusDot');
     statusGfx.fillStyle(0x000000, 0.3);

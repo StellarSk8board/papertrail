@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
-import { Agent, AgentSkill, ApiKeys, SubagentDef } from './lib/types';
-import { loadAgents, saveAgents, loadApiKeys, loadSkills, saveSkills, createAgent, createClaudeAgentFile, generateAgentWithAI, resetProject, syncClaudeSubagents, upgradeAgentsToClaudeCode, parseSubagentFrontmatter } from './lib/storage';
-import { getClaudeCodeAuthStatus, isElectron, onClaudeAgentsChanged, watchProjectAgents } from './lib/terminal';
+import { Agent, AgentSkill, /* ApiKeys, */ SubagentDef } from './lib/types';
+import { loadAgents, saveAgents, /* loadApiKeys, */ loadSkills, saveSkills, createAgent, createClaudeAgentFile, generateAgentWithAI, resetProject, syncClaudeSubagents, upgradeAgentsToClaudeCode, parseSubagentFrontmatter } from './lib/storage';
+import { getClaudeCodeAuthStatus, isElectron, onClaudeAgentsChanged, watchProjectAgents, readClaudeSettings } from './lib/terminal';
 import { getWorkspace, setWorkspace } from './lib/filesystem';
 import AgentList from './components/AgentList';
 import AgentEditor from './components/AgentEditor';
 import ChatWindow from './components/ChatWindow';
-import KeysModal from './components/KeysModal';
+// import KeysModal from './components/KeysModal';  // API keys disabled — Claude Code only
 import TerminalPanel from './components/TerminalPanel';
 import OfficeInstructions, { InstructionRun } from './components/OfficeInstructions';
 import AgentTasks from './components/AgentTasks';
@@ -14,6 +14,7 @@ import SkillsPanel from './components/SkillsPanel';
 import MusicPlayer from './components/MusicPlayer';
 import ClaudeCodeStatus from './components/ClaudeCodeStatus';
 import WorkspacePicker from './components/WorkspacePicker';
+import PermissionsPanel, { PermissionsBanner } from './components/PermissionsPanel';
 
 const OfficeCanvas = lazy(() => import('./components/OfficeCanvas'));
 
@@ -23,8 +24,10 @@ export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [rightPanel, setRightPanel] = useState<RightPanel>('chat');
-  const [apiKeys, setApiKeys] = useState<ApiKeys>({ openai: '', anthropic: '', gemini: '', github: '' });
-  const [showKeys, setShowKeys] = useState(false);
+  // API keys disabled — Claude Code only
+  // const [apiKeys, setApiKeys] = useState<ApiKeys>({ openai: '', anthropic: '', gemini: '', github: '' });
+  // const [showKeys, setShowKeys] = useState(false);
+  const apiKeys = { openai: '', anthropic: '', gemini: '', github: '' }; // stub for downstream compatibility
   const [skills, setSkills] = useState<AgentSkill[]>([]);
   const [instructionRuns, setInstructionRuns] = useState<InstructionRun[]>([]);
   const [instructionRouting, setInstructionRouting] = useState(false);
@@ -33,13 +36,17 @@ export default function App() {
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [startupDone, setStartupDone] = useState(false);
   const [hirePrompt, setHirePrompt] = useState<{ resolve: (value: string | null) => void } | null>(null);
+  const [showPermsModal, setShowPermsModal] = useState(false);
+  const [permsEmpty, setPermsEmpty] = useState(false);
+  const [permsDismissed, setPermsDismissed] = useState(false);
 
   useEffect(() => {
     async function init() {
       const initialAgents = loadAgents();
-      const keys = loadApiKeys();
-      setApiKeys(keys);
-      (window as Window & { electronAPI?: { setGithubToken?: (t: string) => void } }).electronAPI?.setGithubToken?.(keys.github);
+      // API keys disabled — Claude Code only
+      // const keys = loadApiKeys();
+      // setApiKeys(keys);
+      // (window as Window & { electronAPI?: { setGithubToken?: (t: string) => void } }).electronAPI?.setGithubToken?.(keys.github);
       setSkills(loadSkills());
 
       // Load saved workspace dir
@@ -85,6 +92,15 @@ export default function App() {
       }
 
       setStartupDone(true);
+
+      // Check whether any permission rules exist
+      const wsDir2 = savedWs || (isElectron() ? await getWorkspace() : undefined);
+      if (wsDir2) {
+        const { settings } = await readClaudeSettings('project');
+        const perms = settings.permissions || { allow: [], deny: [] };
+        const empty = (!perms.allow || perms.allow.length === 0) && (!perms.deny || perms.deny.length === 0);
+        setPermsEmpty(empty);
+      }
     }
     init();
   }, []);
@@ -236,7 +252,8 @@ export default function App() {
     if (synced !== agents) setAgents(synced);
   }
 
-  const hasKeys = apiKeys.openai || apiKeys.anthropic || apiKeys.gemini;
+  const hasKeys = false; // API keys disabled — Claude Code only
+  // const hasKeys = apiKeys.openai || apiKeys.anthropic || apiKeys.gemini;
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
@@ -272,17 +289,25 @@ export default function App() {
         </div>
         <div className="px-3 py-2 border-t border-gray-800 flex flex-col gap-1.5">
           <button
+            onClick={() => setShowPermsModal(true)}
+            className={`w-full btn-pixel text-[10px] ${permsEmpty && !permsDismissed ? 'bg-amber-700 hover:bg-amber-600 text-amber-50 animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
+          >
+            🔒 Permissions
+          </button>
+          <button
             onClick={handleNewProject}
             className="w-full btn-pixel text-[10px] bg-red-800 hover:bg-red-700 text-red-100"
           >
             New Project
           </button>
+          {/* API Keys button disabled — Claude Code only
           <button
             onClick={() => setShowKeys(true)}
             className={`w-full btn-pixel text-[10px] ${hasKeys ? 'bg-emerald-800 hover:bg-emerald-700 text-emerald-50' : 'bg-amber-700 hover:bg-amber-600 text-amber-50'}`}
           >
             {hasKeys ? 'Keys Set' : 'Add API Keys'}
           </button>
+          */}
         </div>
       </aside>
 
@@ -296,25 +321,53 @@ export default function App() {
                 onAgentClick={handleAgentClick}
               />
             </Suspense>
-            <div className="absolute bottom-0 left-0 right-0 px-3 py-2 bg-slate-950/90 backdrop-blur-sm border-t border-slate-700 flex gap-4 overflow-x-auto">
-              {agents.filter((a) => a.status !== 'idle' && a.currentThought).map((a) => (
-                <div key={a.id} className="flex items-center gap-1.5 shrink-0">
-                  <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: a.color }} />
-                  <span className="text-[10px] font-pixel text-slate-300">
-                    <span style={{ color: a.color }}>{a.name}:</span>{' '}
-                    {a.currentThought.slice(0, 50)}{a.currentThought.length > 50 ? '...' : ''}
-                  </span>
+            <div className="absolute bottom-0 left-0 right-0 px-3 py-2 bg-slate-950/90 backdrop-blur-sm border-t border-slate-700 flex flex-col gap-1">
+              {/* Attention-needed agents (stuck / waiting) */}
+              {agents.filter((a) => a.status === 'stuck' || a.status === 'waiting-input' || a.status === 'waiting-approval').length > 0 && (
+                <div className="flex gap-3 overflow-x-auto">
+                  {agents.filter((a) => a.status === 'stuck' || a.status === 'waiting-input' || a.status === 'waiting-approval').map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => handleAgentClick(a)}
+                      className={`flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded text-[10px] font-pixel border transition-colors ${
+                        a.status === 'stuck'
+                          ? 'bg-red-900/40 border-red-700/50 text-red-300 animate-pulse hover:bg-red-900/60'
+                          : a.status === 'waiting-approval'
+                          ? 'bg-amber-900/40 border-amber-700/50 text-amber-300 animate-pulse hover:bg-amber-900/60'
+                          : 'bg-orange-900/40 border-orange-700/50 text-orange-300 animate-pulse hover:bg-orange-900/60'
+                      }`}
+                    >
+                      <span>{a.status === 'stuck' ? '⚠' : a.status === 'waiting-approval' ? '🔒' : '⏸'}</span>
+                      <span style={{ color: a.color }}>{a.name}</span>
+                      <span className="text-[9px] opacity-80">
+                        {a.status === 'stuck' ? 'Stuck' : a.status === 'waiting-approval' ? 'Needs approval' : 'Needs input'}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ))}
-              {agents.every((a) => a.status === 'idle' || !a.currentThought) && (
-                <span className="text-[10px] font-pixel text-slate-400">
-                  Click an employee to chat!
-                </span>
               )}
+              {/* Active agents */}
+              <div className="flex gap-4 overflow-x-auto">
+                {agents.filter((a) => a.status !== 'idle' && a.status !== 'stuck' && a.status !== 'waiting-input' && a.status !== 'waiting-approval' && a.currentThought).map((a) => (
+                  <div key={a.id} className="flex items-center gap-1.5 shrink-0">
+                    <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: a.color }} />
+                    <span className="text-[10px] font-pixel text-slate-300">
+                      <span style={{ color: a.color }}>{a.name}:</span>{' '}
+                      {a.currentThought.slice(0, 50)}{a.currentThought.length > 50 ? '...' : ''}
+                    </span>
+                  </div>
+                ))}
+                {agents.every((a) => a.status === 'idle' || !a.currentThought) && (
+                  <span className="text-[10px] font-pixel text-slate-400">
+                    Click an employee to chat!
+                  </span>
+                )}
+              </div>
             </div>
           </main>
 
       <aside className="w-80 shrink-0 border-l border-slate-700 flex flex-col bg-slate-900/95 overflow-hidden">
+        <PermissionsBanner workspace={workspaceDir} />
         <div className="flex border-b border-gray-800">
           <button
             onClick={() => setRightPanel('chat')}
@@ -350,6 +403,7 @@ export default function App() {
           >
             Assign
           </button>
+
         </div>
         <div className="flex-1 overflow-hidden relative">
           {rightPanel !== 'terminal' && (
@@ -401,12 +455,13 @@ export default function App() {
           )}
           {/* Terminal is always mounted to preserve shell session; hidden when not active */}
           <div className={`absolute inset-0 ${rightPanel === 'terminal' ? '' : 'invisible pointer-events-none'}`}>
-            <TerminalPanel agents={agents} />
+            <TerminalPanel agents={agents} workspaceDir={workspaceDir} />
           </div>
         </div>
       </aside>
       </>
 
+      {/* API Keys modal disabled — Claude Code only
       {showKeys && (
         <KeysModal
           keys={apiKeys}
@@ -417,6 +472,7 @@ export default function App() {
           onClose={() => setShowKeys(false)}
         />
       )}
+      */}
 
       {showWorkspacePicker && (
         <WorkspacePicker
@@ -432,6 +488,46 @@ export default function App() {
           onSubmit={(desc) => hirePrompt.resolve(desc)}
           onCancel={() => hirePrompt.resolve(null)}
         />
+      )}
+
+      {showPermsModal && workspaceDir && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowPermsModal(false)}>
+          <div className="bg-slate-800 border border-slate-600 rounded-lg w-[480px] max-h-[80vh] shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-pixel text-white">🔒 Permissions & Config</h3>
+              <button onClick={() => setShowPermsModal(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <PermissionsPanel workspace={workspaceDir} onSaved={() => setPermsEmpty(false)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {permsEmpty && !permsDismissed && !showPermsModal && workspaceDir && (
+        <div className="fixed bottom-4 left-4 z-40 bg-amber-900/95 border border-amber-600/60 rounded-lg p-3 shadow-lg max-w-xs animate-slide-up">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-400 text-sm mt-0.5">⚠</span>
+            <div className="flex-1">
+              <p className="text-[11px] font-pixel text-amber-100">No permissions configured</p>
+              <p className="text-[10px] text-amber-300/70 mt-0.5">Set up allow/deny rules so Claude Code knows what tools it can use.</p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => { setShowPermsModal(true); setPermsDismissed(true); }}
+                  className="btn-pixel text-[10px] bg-amber-700 hover:bg-amber-600 text-white px-2 py-0.5"
+                >
+                  Set Up Now
+                </button>
+                <button
+                  onClick={() => setPermsDismissed(true)}
+                  className="text-[10px] text-amber-400/60 hover:text-amber-300 font-pixel"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

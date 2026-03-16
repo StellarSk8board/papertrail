@@ -1,37 +1,36 @@
 import { useMemo, useState } from 'react';
-import { Agent, ApiKeys, MODELS, SPRITE_KEYS, AGENT_COLORS, SubagentDef, AgentScope } from '../lib/types';
+import { Agent, /* ApiKeys, */ MODELS, SPRITE_KEYS, AGENT_COLORS, SubagentDef, AgentScope } from '../lib/types';
 import { writeClaudeAgentFile, deleteClaudeAgentFile, getHomedir } from '../lib/terminal';
 import { buildSubagentMd, generateAgentWithAI, parseSubagentFrontmatter } from '../lib/storage';
 
 interface AgentEditorProps {
   agent: Agent;
-  apiKeys: ApiKeys;
+  apiKeys?: Record<string, string>; // API keys disabled — kept for interface compat
   workspaceDir?: string;
   onSave: (agent: Agent) => void;
   onDelete: (agentId: string) => void;
   onClose: () => void;
 }
 
-const PROVIDER_KEY_MAP: Record<string, keyof ApiKeys | null> = {
-  openai: 'openai',
-  anthropic: 'anthropic',
-  google: 'gemini',
-  'claude-code': null, // local CLI, no key needed
-};
+// API keys disabled — only Claude Code is available
+// const PROVIDER_KEY_MAP: Record<string, keyof ApiKeys | null> = {
+//   openai: 'openai',
+//   anthropic: 'anthropic',
+//   google: 'gemini',
+//   'claude-code': null,
+// };
 
-export default function AgentEditor({ agent, apiKeys, workspaceDir, onSave, onDelete, onClose }: AgentEditorProps) {
+export default function AgentEditor({ agent, workspaceDir, onSave, onDelete, onClose }: AgentEditorProps) {
   const [draft, setDraft] = useState<Agent>({ ...agent });
   const [tab, setTab] = useState<'profile' | 'subagent' | 'history'>('profile');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatePrompt, setGeneratePrompt] = useState<string | null>(null);
 
+  // Only show Claude Code model (API-key-based providers disabled)
   const availableModels = useMemo(() =>
-    MODELS.filter((m) => {
-      const keyField = PROVIDER_KEY_MAP[m.provider];
-      return keyField === null || !!apiKeys[keyField];
-    }),
-    [apiKeys],
+    MODELS.filter((m) => m.provider === 'claude-code'),
+    [],
   );
 
   function update<K extends keyof Agent>(key: K, value: Agent[K]) {

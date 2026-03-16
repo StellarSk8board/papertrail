@@ -307,26 +307,37 @@ export async function generateTodoList(
 
 export interface AgentTeamCallbacks {
   onTeamEvent?: (event: { agentName?: string; type: string; text?: string }) => void;
-  onAgentStatus?: (agentName: string, status: 'working' | 'done', thought?: string) => void;
+  onAgentStatus?: (agentName: string, status: 'working' | 'done' | 'waiting-input' | 'waiting-approval' | 'stuck', thought?: string) => void;
+  /** Called when the boss delegates to an agent name not in the roster — allows dynamic creation */
+  onNewAgent?: (agentName: string, description: string) => void;
+  /** Called when a permission request event is received for the team */
+  onPermissionRequest?: (agentName: string | undefined, tool: string, description: string, reqId?: number) => void;
 }
 
 /**
  * Route tasks through Claude Code Agent Teams.
  * The Boss becomes the team lead, and all subagent-backed employees
  * become teammates. Claude Code handles the orchestration natively.
+ *
+ * If Claude Code delegates to an agent not in the existing roster,
+ * the `onNewAgent` callback fires so the UI can create the employee.
  */
 export async function routeTasksViaClaudeCode(
   instruction: string,
   agents: Agent[],
   callbacks: AgentTeamCallbacks,
   signal?: AbortSignal,
-): Promise<string> {
+  onDebug?: (line: string) => void,
+  sessionId?: string,
+): Promise<{ text: string; sessionId?: string }> {
   const workspace = await getWorkspace();
 
   // Build subagent definitions from all subagent-backed employees
   const agentDefs: Record<string, SubagentDef> = {};
+  const knownNames = new Set<string>();
   for (const a of agents) {
     if (a.isBoss) continue;
+    knownNames.add(a.name.toLowerCase());
     if (a.subagentDef) {
       agentDefs[a.name] = a.subagentDef;
     } else {
@@ -338,36 +349,121 @@ export async function routeTasksViaClaudeCode(
     }
   }
 
+  // Track dynamically-created agents so we only fire onNewAgent once per name
+  const createdAgents = new Set<string>();
+
+  // Build a system prompt that tells the boss to delegate to its team
+  const agentNames = Object.keys(agentDefs);
+  const agentRoster = agentNames.map(name => {
+    const def = agentDefs[name];
+    return `- **${name}**: ${def.description}${def.prompt ? ` — ${def.prompt.slice(0, 150)}` : ''}`;
+  }).join('\n');
+
+  const systemPrompt = `You are the Boss, the office manager and team lead. You coordinate work by delegating tasks to your team members using the Agent tool.
+
+## Your Team
+${agentRoster || '(No employees available — do the work yourself)'}
+
+## Rules
+- For any non-trivial task, you MUST delegate work to your team members using the Agent tool. Do NOT do the work yourself when you have employees who can handle it.
+- Break complex tasks into subtasks and assign each to the most appropriate team member.
+- You can assign multiple tasks to different agents in parallel.
+- After delegating, summarize the plan and results for the user.
+- Only do work yourself if it's a simple question that doesn't require coding, file operations, or specialized knowledge.
+- When delegating, provide clear, specific instructions to each agent about what they should do.`;
+
   const options: ClaudeCodeAdvancedOptions = {
     prompt: instruction,
     cwd: workspace,
+    // Use systemPrompt for new sessions, appendSystemPrompt when resuming
+    ...(sessionId
+      ? { appendSystemPrompt: systemPrompt }
+      : { systemPrompt }),
     outputFormat: 'stream-json',
     verbose: true,
     agents: Object.keys(agentDefs).length > 0 ? agentDefs : undefined,
     enableAgentTeams: true,
     teammateMode: 'auto',
-    permissionMode: 'default',
+    permissionMode: 'acceptEdits',
+    continueSession: !!sessionId,
+    resumeSessionId: sessionId,
   };
+
+  onDebug?.(`[orchestrator] options: ${JSON.stringify({ ...options, agents: Object.keys(agentDefs) })}`);
 
   let fullText = '';
+  // Track time of last meaningful event per agent to detect stuck agents
+  const agentLastActivity = new Map<string, number>();
+  const STUCK_TIMEOUT_MS = 120_000; // 2 minutes of silence = stuck
 
-  const streamCallbacks: ClaudeCodeStreamCallbacks = {
-    onTextDelta: (text) => {
-      fullText += text;
-      callbacks.onTeamEvent?.({ type: 'text', text });
-    },
-    onToolUse: (name, input) => {
-      if (name === 'Agent') {
-        const agentName = (input.agent ?? input.name ?? '') as string;
-        callbacks.onAgentStatus?.(agentName, 'working', `Working on: ${((input.prompt ?? input.task ?? '') as string).slice(0, 80)}`);
+  const stuckCheckInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [name, ts] of agentLastActivity) {
+      if (now - ts > STUCK_TIMEOUT_MS) {
+        callbacks.onAgentStatus?.(name, 'stuck', 'No progress for 2 minutes');
       }
-      callbacks.onTeamEvent?.({ type: 'tool_use', agentName: (input.agent ?? '') as string, text: `${name}: ${JSON.stringify(input).slice(0, 200)}` });
-    },
-    onEvent: (event) => {
-      callbacks.onTeamEvent?.({ type: event.type });
-    },
-  };
+    }
+  }, 15_000);
 
-  const result = await runClaudeCodeAdvanced(options, streamCallbacks, signal);
-  return result.result || fullText;
+  try {
+    const streamCallbacks: ClaudeCodeStreamCallbacks = {
+      onTextDelta: (text) => {
+        fullText += text;
+        callbacks.onTeamEvent?.({ type: 'text', text });
+      },
+      onToolUse: (name, input) => {
+        onDebug?.(`[event] tool_use: ${name} ${JSON.stringify(input).slice(0, 300)}`);
+        if (name === 'Agent') {
+          const agentName = (input.agent ?? input.name ?? '') as string;
+          const taskDesc = ((input.prompt ?? input.task ?? '') as string).slice(0, 80);
+
+          // Update activity tracker
+          if (agentName) agentLastActivity.set(agentName.toLowerCase(), Date.now());
+
+          // Detect new agent creation — if the Agent tool targets a name
+          // not in the original roster, it's a dynamically-created subagent
+          if (agentName && !knownNames.has(agentName.toLowerCase()) && !createdAgents.has(agentName.toLowerCase())) {
+            createdAgents.add(agentName.toLowerCase());
+            const desc = (input.description ?? input.role ?? taskDesc ?? 'Specialist') as string;
+            callbacks.onNewAgent?.(agentName, desc);
+          }
+
+          callbacks.onAgentStatus?.(agentName, 'working', `Working on: ${taskDesc}`);
+        }
+        callbacks.onTeamEvent?.({ type: 'tool_use', agentName: (input.agent ?? '') as string, text: `${name}: ${JSON.stringify(input).slice(0, 200)}` });
+      },
+      onEvent: (event) => {
+        onDebug?.(`[raw] ${JSON.stringify(event).slice(0, 500)}`);
+        callbacks.onTeamEvent?.({ type: event.type });
+
+        // Detect permission_request events → an agent needs approval
+        if (event.type === 'permission_request') {
+          const ev = event as unknown as Record<string, unknown>;
+          const toolName = ev.tool_name as string
+            || ((ev.tool as Record<string, unknown>)?.name as string)
+            || 'unknown';
+          const desc = ev.description as string
+            || ev.message as string
+            || `Wants to use ${toolName}`;
+          const agentName = ev.agent_name as string | undefined;
+          // reqId is not available from the event — the onPermissionRequest callback below handles it with reqId
+          callbacks.onPermissionRequest?.(agentName, toolName, desc);
+          if (agentName) {
+            callbacks.onAgentStatus?.(agentName, 'waiting-approval', `Needs approval: ${toolName}`);
+          }
+        }
+      },
+      onStderr: onDebug ? (text) => {
+        onDebug(`[stderr] ${text.trim()}`);
+      } : undefined,
+      onPermissionRequest: (request) => {
+        callbacks.onPermissionRequest?.(undefined, request.tool, request.description, request.reqId);
+      },
+    };
+
+    const result = await runClaudeCodeAdvanced(options, streamCallbacks, signal);
+    return { text: result.result || fullText, sessionId: result.sessionId };
+  } finally {
+    clearInterval(stuckCheckInterval);
+  }
 }

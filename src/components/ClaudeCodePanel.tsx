@@ -5,12 +5,17 @@ import {
   readClaudeAgentFiles,
   writeClaudeAgentFile,
   deleteClaudeAgentFile,
+  readClaudeSettings,
+  writeClaudeSettings,
+  readClaudeMd,
+  writeClaudeMd,
   isElectron,
   type ClaudeCodeAdvancedOptions,
   type ClaudeCodeEvent,
   type ClaudeCodeStreamCallbacks,
   type AgentFileInfo,
   type SubagentDef,
+  type ClaudeSettingsJson,
 } from '../lib/terminal';
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -33,6 +38,41 @@ interface SessionInfo {
 }
 
 type SubTab = 'chat' | 'subagents' | 'teams' | 'settings';
+
+// Build a compact summary of conversation history for context injection
+// when a Claude Code session is lost and we need to start fresh.
+function buildConversationSummary(messages: SessionMessage[]): string {
+  const parts: string[] = [];
+  const MAX_SUMMARY_CHARS = 8000;
+  let totalChars = 0;
+
+  for (const msg of messages) {
+    if (totalChars >= MAX_SUMMARY_CHARS) {
+      parts.push('… (earlier messages truncated)');
+      break;
+    }
+    let line = '';
+    switch (msg.type) {
+      case 'user':
+        line = `User: ${msg.content}`;
+        break;
+      case 'assistant':
+        line = `Assistant: ${msg.content.slice(0, 500)}${msg.content.length > 500 ? '…' : ''}`;
+        break;
+      case 'tool_use':
+        line = `[Tool call: ${msg.toolName || 'unknown'}]`;
+        break;
+      case 'tool_result':
+        line = `[Tool result${msg.isError ? ' (error)' : ''}: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? '…' : ''}]`;
+        break;
+      default:
+        continue; // skip system/error messages
+    }
+    totalChars += line.length;
+    parts.push(line);
+  }
+  return parts.join('\n');
+}
 
 // ─── Subagent Editor ──────────────────────────────────────────────
 
@@ -483,97 +523,341 @@ function AgentTeamsPanel({
 
 // ─── Settings Panel ───────────────────────────────────────────────
 
+// Well-known Claude Code tools for quick-add UI
+const CLAUDE_TOOLS = [
+  'Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob',
+  'WebFetch', 'WebSearch', 'LSP', 'Skill', 'TodoWrite', 'Agent',
+];
+
+function PermissionRulesEditor({
+  label,
+  rules,
+  onChange,
+}: {
+  label: string;
+  rules: string[];
+  onChange: (rules: string[]) => void;
+}) {
+  const [newRule, setNewRule] = useState('');
+
+  function addRule() {
+    const trimmed = newRule.trim();
+    if (trimmed && !rules.includes(trimmed)) {
+      onChange([...rules, trimmed]);
+      setNewRule('');
+    }
+  }
+
+  return (
+    <div>
+      <span className="text-[10px] font-pixel text-slate-400">{label}</span>
+      <div className="mt-1 space-y-1">
+        {rules.map((rule, i) => (
+          <div key={i} className="flex items-center gap-1 group">
+            <code className="flex-1 text-[10px] text-indigo-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono truncate">
+              {rule}
+            </code>
+            <button
+              onClick={() => onChange(rules.filter((_, j) => j !== i))}
+              className="text-[10px] text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Remove"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <div className="flex gap-1">
+          <input
+            value={newRule}
+            onChange={(e) => setNewRule(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addRule())}
+            placeholder='e.g. Bash(git *) or Read'
+            className="flex-1 px-1.5 py-0.5 text-[10px] bg-slate-900 border border-slate-700 rounded text-white font-mono placeholder-slate-600"
+          />
+          <button
+            onClick={addRule}
+            disabled={!newRule.trim()}
+            className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:text-slate-700 px-1"
+          >
+            + Add
+          </button>
+        </div>
+        {/* Quick-add tool buttons */}
+        <div className="flex flex-wrap gap-1 mt-1">
+          {CLAUDE_TOOLS.filter((t) => !rules.includes(t)).slice(0, 6).map((tool) => (
+            <button
+              key={tool}
+              onClick={() => onChange([...rules, tool])}
+              className="text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-500 hover:text-indigo-300 hover:bg-slate-700 transition-colors"
+            >
+              +{tool}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPanel({
   settings,
   onChange,
   version,
+  workspace,
 }: {
   settings: SessionSettings;
   onChange: (s: SessionSettings) => void;
   version: string | null;
+  workspace: string;
 }) {
+  const [settingsScope, setSettingsScope] = useState<'global' | 'project'>('project');
+  const [claudeSettings, setClaudeSettings] = useState<ClaudeSettingsJson>({});
+  const [claudeMdContent, setClaudeMdContent] = useState('');
+  const [claudeMdExists, setClaudeMdExists] = useState(false);
+  const [settingsExists, setSettingsExists] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+
+  // Load settings.json and CLAUDE.md on mount / scope change
+  useEffect(() => {
+    loadSettings();
+  }, [settingsScope, workspace]);
+
+  useEffect(() => {
+    readClaudeMd().then(({ content, exists }) => {
+      setClaudeMdContent(content);
+      setClaudeMdExists(exists);
+    });
+  }, [workspace]);
+
+  async function loadSettings() {
+    const { settings: s, exists } = await readClaudeSettings(settingsScope);
+    setClaudeSettings(s);
+    setSettingsExists(exists);
+  }
+
+  async function saveSettings() {
+    setSaving(true);
+    setSaveMsg('');
+    const ok = await writeClaudeSettings(settingsScope, claudeSettings);
+    setSaveMsg(ok ? 'Saved ✓' : 'Error saving');
+    setSaving(false);
+    setTimeout(() => setSaveMsg(''), 2000);
+  }
+
+  async function saveClaudeMd() {
+    setSaving(true);
+    setSaveMsg('');
+    const ok = await writeClaudeMd(claudeMdContent);
+    if (ok) setClaudeMdExists(true);
+    setSaveMsg(ok ? 'CLAUDE.md saved ✓' : 'Error saving');
+    setSaving(false);
+    setTimeout(() => setSaveMsg(''), 2000);
+  }
+
+  const perms = claudeSettings.permissions || { allow: [], deny: [] };
+
+  function updatePermissions(field: 'allow' | 'deny', rules: string[]) {
+    setClaudeSettings({
+      ...claudeSettings,
+      permissions: { ...perms, [field]: rules },
+    });
+  }
+
   return (
-    <div className="p-3 space-y-3 overflow-y-auto h-full">
-      <h3 className="text-xs font-pixel text-indigo-300">Claude Code Settings</h3>
+    <div className="p-3 space-y-4 overflow-y-auto h-full">
+      {/* ─── Session Settings ─── */}
+      <div>
+        <h3 className="text-xs font-pixel text-indigo-300 mb-2">Session Settings</h3>
 
-      {version && (
-        <div className="text-[10px] text-slate-500">
-          Claude Code CLI: <span className="text-emerald-400">{version}</span>
+        {version && (
+          <div className="text-[10px] text-slate-500 mb-2">
+            Claude Code CLI: <span className="text-emerald-400">{version}</span>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <label className="block">
+            <span className="text-[10px] font-pixel text-slate-400">Model</span>
+            <select
+              value={settings.model}
+              onChange={(e) => onChange({ ...settings, model: e.target.value })}
+              className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+            >
+              <option value="">Default</option>
+              <option value="sonnet">Claude Sonnet</option>
+              <option value="opus">Claude Opus</option>
+              <option value="haiku">Claude Haiku</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-[10px] font-pixel text-slate-400">Permission Mode</span>
+            <select
+              value={settings.permissionMode}
+              onChange={(e) => onChange({ ...settings, permissionMode: e.target.value })}
+              className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+            >
+              <option value="default">Default (ask for permissions)</option>
+              <option value="acceptEdits">Accept Edits (auto-approve file edits)</option>
+              <option value="plan">Plan Mode (read-only exploration)</option>
+              <option value="bypassPermissions">Bypass Permissions (skip all prompts)</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-[10px] font-pixel text-slate-400">Allowed Tools (comma-separated)</span>
+            <input
+              value={settings.allowedTools}
+              onChange={(e) => onChange({ ...settings, allowedTools: e.target.value })}
+              className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+              placeholder="Empty = all tools allowed"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-[10px] font-pixel text-slate-400">Disallowed Tools (comma-separated)</span>
+            <input
+              value={settings.disallowedTools}
+              onChange={(e) => onChange({ ...settings, disallowedTools: e.target.value })}
+              className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+              placeholder="Tools to block, e.g. Bash,WebFetch"
+            />
+          </label>
+
+          <div className="flex gap-2">
+            <label className="block flex-1">
+              <span className="text-[10px] font-pixel text-slate-400">Max Turns</span>
+              <input
+                type="number"
+                value={settings.maxTurns}
+                onChange={(e) => onChange({ ...settings, maxTurns: Number(e.target.value) })}
+                className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+                placeholder="0 = unlimited"
+              />
+            </label>
+            <label className="block flex-1">
+              <span className="text-[10px] font-pixel text-slate-400">Budget (USD)</span>
+              <input
+                type="number"
+                step="0.10"
+                value={settings.maxBudget}
+                onChange={(e) => onChange({ ...settings, maxBudget: Number(e.target.value) })}
+                className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
+                placeholder="0 = unlimited"
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-[10px] font-pixel text-slate-400">Append System Prompt</span>
+            <textarea
+              value={settings.appendSystemPrompt}
+              onChange={(e) => onChange({ ...settings, appendSystemPrompt: e.target.value })}
+              className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono h-16 resize-y"
+              placeholder="Additional instructions appended to default Claude Code prompt..."
+            />
+          </label>
         </div>
-      )}
+      </div>
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Model</span>
-        <select
-          value={settings.model}
-          onChange={(e) => onChange({ ...settings, model: e.target.value })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
-        >
-          <option value="">Default</option>
-          <option value="sonnet">Claude Sonnet</option>
-          <option value="opus">Claude Opus</option>
-          <option value="haiku">Claude Haiku</option>
-        </select>
-      </label>
+      {/* ─── Persistent Permissions (settings.json) ─── */}
+      <div className="border-t border-slate-800 pt-3">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-pixel text-indigo-300">Permission Rules</h3>
+          <div className="flex gap-1">
+            {(['project', 'global'] as const).map((scope) => (
+              <button
+                key={scope}
+                onClick={() => setSettingsScope(scope)}
+                className={`text-[9px] px-2 py-0.5 rounded font-pixel transition-colors ${
+                  settingsScope === scope
+                    ? 'bg-indigo-700 text-white'
+                    : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {scope === 'project' ? '📁 Project' : '🌐 Global'}
+              </button>
+            ))}
+          </div>
+        </div>
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Permission Mode</span>
-        <select
-          value={settings.permissionMode}
-          onChange={(e) => onChange({ ...settings, permissionMode: e.target.value })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
-        >
-          <option value="default">Default (ask for permissions)</option>
-          <option value="acceptEdits">Accept Edits (auto-approve file edits)</option>
-          <option value="plan">Plan Mode (read-only exploration)</option>
-        </select>
-      </label>
+        <p className="text-[10px] text-slate-600 mb-2">
+          {settingsScope === 'project'
+            ? `Saved to ${workspace}/.claude/settings.json`
+            : 'Saved to ~/.claude/settings.json'}
+          {settingsExists ? '' : ' (will be created)'}
+        </p>
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Allowed Tools (comma-separated, empty = all)</span>
-        <input
-          value={settings.allowedTools}
-          onChange={(e) => onChange({ ...settings, allowedTools: e.target.value })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
-          placeholder="Bash,Read,Edit,Write,Grep,Glob"
-        />
-      </label>
+        <div className="space-y-3">
+          <PermissionRulesEditor
+            label="✅ Allow Rules"
+            rules={perms.allow || []}
+            onChange={(rules) => updatePermissions('allow', rules)}
+          />
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Max Turns (0 = unlimited)</span>
-        <input
-          type="number"
-          value={settings.maxTurns}
-          onChange={(e) => onChange({ ...settings, maxTurns: Number(e.target.value) })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
-        />
-      </label>
+          <PermissionRulesEditor
+            label="🚫 Deny Rules"
+            rules={perms.deny || []}
+            onChange={(rules) => updatePermissions('deny', rules)}
+          />
+        </div>
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Max Budget (USD, 0 = unlimited)</span>
-        <input
-          type="number"
-          step="0.10"
-          value={settings.maxBudget}
-          onChange={(e) => onChange({ ...settings, maxBudget: Number(e.target.value) })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white"
-        />
-      </label>
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            onClick={saveSettings}
+            disabled={saving}
+            className="btn-pixel text-[10px] bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 px-3 py-1"
+          >
+            {saving ? 'Saving…' : 'Save Permission Rules'}
+          </button>
+          {saveMsg && (
+            <span className={`text-[10px] ${saveMsg.includes('✓') ? 'text-emerald-400' : 'text-red-400'}`}>
+              {saveMsg}
+            </span>
+          )}
+        </div>
 
-      <label className="block">
-        <span className="text-[10px] font-pixel text-slate-400">Append System Prompt</span>
+        <div className="mt-2 text-[10px] text-slate-600 leading-relaxed">
+          <p>Rules support glob patterns for tool arguments:</p>
+          <code className="text-[9px] text-slate-500 block mt-0.5">
+            Bash(git *) — allow git commands only
+          </code>
+          <code className="text-[9px] text-slate-500 block">
+            Bash(rm *) — deny rm commands
+          </code>
+        </div>
+      </div>
+
+      {/* ─── CLAUDE.md ─── */}
+      <div className="border-t border-slate-800 pt-3">
+        <h3 className="text-xs font-pixel text-indigo-300 mb-1">CLAUDE.md</h3>
+        <p className="text-[10px] text-slate-600 mb-2">
+          Project instructions for Claude Code — placed at workspace root.
+          {claudeMdExists ? '' : ' (will be created)'}
+        </p>
         <textarea
-          value={settings.appendSystemPrompt}
-          onChange={(e) => onChange({ ...settings, appendSystemPrompt: e.target.value })}
-          className="w-full mt-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono h-20 resize-y"
-          placeholder="Additional instructions appended to the default Claude Code prompt..."
+          value={claudeMdContent}
+          onChange={(e) => setClaudeMdContent(e.target.value)}
+          className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white font-mono h-28 resize-y"
+          placeholder={'# Project Instructions\n\nTell Claude what this project is, what tools/patterns to prefer, what to avoid, etc.'}
         />
-      </label>
+        <button
+          onClick={saveClaudeMd}
+          disabled={saving}
+          className="mt-1 btn-pixel text-[10px] bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 px-3 py-1"
+        >
+          {saving ? 'Saving…' : 'Save CLAUDE.md'}
+        </button>
+      </div>
 
-      <div className="text-[10px] text-slate-500 mt-4 leading-relaxed">
-        <p><strong className="text-slate-400">Available Claude Code tools:</strong></p>
-        <p className="mt-1 font-mono text-slate-600">
-          Agent, Bash, Read, Write, Edit, Grep, Glob, WebFetch, WebSearch, LSP, Skill, TodoWrite
+      {/* ─── Tool Reference ─── */}
+      <div className="border-t border-slate-800 pt-3">
+        <p className="text-[10px] text-slate-500 leading-relaxed">
+          <strong className="text-slate-400">Available Claude Code tools:</strong>
+        </p>
+        <p className="mt-1 font-mono text-[9px] text-slate-600">
+          {CLAUDE_TOOLS.join(', ')}
         </p>
       </div>
     </div>
@@ -586,6 +870,7 @@ interface SessionSettings {
   model: string;
   permissionMode: string;
   allowedTools: string;
+  disallowedTools: string;
   maxTurns: number;
   maxBudget: number;
   appendSystemPrompt: string;
@@ -595,6 +880,7 @@ const DEFAULT_SETTINGS: SessionSettings = {
   model: '',
   permissionMode: 'default',
   allowedTools: '',
+  disallowedTools: '',
   maxTurns: 0,
   maxBudget: 0,
   appendSystemPrompt: '',
@@ -619,6 +905,17 @@ export default function ClaudeCodePanel({ workspace }: { workspace: string }) {
   useEffect(() => {
     getClaudeCodeVersion().then(setVersion);
     refreshAgentFiles();
+  }, [workspace]);
+
+  // Clear session when workspace changes — Claude Code sessions are workspace-bound
+  const prevWorkspaceRef = useRef(workspace);
+  useEffect(() => {
+    if (prevWorkspaceRef.current !== workspace) {
+      prevWorkspaceRef.current = workspace;
+      setMessages([]);
+      setSessionInfo({});
+      setStderrLog([]);
+    }
   }, [workspace]);
 
   // Auto-scroll
@@ -662,13 +959,24 @@ export default function ClaudeCodePanel({ workspace }: { workspace: string }) {
     if (settings.model) options.model = settings.model;
     if (settings.permissionMode !== 'default') options.permissionMode = settings.permissionMode as ClaudeCodeAdvancedOptions['permissionMode'];
     if (settings.allowedTools) options.allowedTools = settings.allowedTools.split(',').map((t) => t.trim()).filter(Boolean);
+    if (settings.disallowedTools) options.disallowedTools = settings.disallowedTools.split(',').map((t) => t.trim()).filter(Boolean);
     if (settings.maxTurns > 0) options.maxTurns = settings.maxTurns;
     if (settings.maxBudget > 0) options.maxBudget = settings.maxBudget;
     if (settings.appendSystemPrompt) options.appendSystemPrompt = settings.appendSystemPrompt;
 
-    // Continue session if we have one
+    // Resume the explicit session by ID (more reliable than --continue)
     if (sessionInfo.id && !extraOpts?.resumeSessionId) {
-      options.continueSession = true;
+      options.resumeSessionId = sessionInfo.id;
+    }
+
+    // When resuming a session, Claude Code has full history.
+    // When starting fresh after a lost session or first message,
+    // prepend a conversation summary so Claude has context.
+    if (!options.resumeSessionId && messages.length > 1) {
+      const summary = buildConversationSummary(messages);
+      if (summary) {
+        options.prompt = `[Previous conversation context — the session was reset, here's what happened so far]\n${summary}\n\n[New message]\n${text}`;
+      }
     }
 
     // Accumulate assistant text for the current response
@@ -721,15 +1029,34 @@ export default function ClaudeCodePanel({ workspace }: { workspace: string }) {
 
     try {
       const result = await runClaudeCodeAdvanced(options, callbacks, controller.signal);
+
+      // Detect session loss: if we tried to resume but got a different session
+      const expectedSession = options.resumeSessionId;
+      const actualSession = result.sessionId;
+
+      if (expectedSession && actualSession && actualSession !== expectedSession) {
+        addMessage({
+          type: 'system',
+          content: 'Session was reset — Claude Code started a new session. Previous context was included as a summary.',
+        });
+      }
+
       setSessionInfo({
-        id: result.sessionId,
+        id: actualSession,
         cost: result.cost,
         inputTokens: result.usage?.input_tokens,
         outputTokens: result.usage?.output_tokens,
       });
     } catch (err) {
       if (!controller.signal.aborted) {
-        addMessage({ type: 'error', content: (err as Error).message });
+        const errMsg = (err as Error).message;
+        addMessage({ type: 'error', content: errMsg });
+
+        // If the session resume failed, clear the stale session ID so the
+        // next attempt starts fresh (with summary context instead).
+        if (options.resumeSessionId && errMsg.toLowerCase().includes('session')) {
+          setSessionInfo((prev) => ({ ...prev, id: undefined }));
+        }
       }
     } finally {
       setIsRunning(false);
@@ -926,7 +1253,7 @@ export default function ClaudeCodePanel({ workspace }: { workspace: string }) {
         ) : subTab === 'teams' ? (
           <AgentTeamsPanel onSendMessage={sendMessage} isRunning={isRunning} />
         ) : (
-          <SettingsPanel settings={settings} onChange={setSettings} version={version} />
+          <SettingsPanel settings={settings} onChange={setSettings} version={version} workspace={workspace} />
         )}
       </div>
     </div>

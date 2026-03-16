@@ -24,6 +24,7 @@ interface ClaudeCodeAPI {
   start: (prompt: string, systemPrompt: string, cwd?: string, timeoutMs?: number) => Promise<number>;
   startAdvanced: (options: ClaudeCodeAdvancedOptions) => Promise<number>;
   abort: (reqId: number) => Promise<boolean>;
+  sendInput: (reqId: number, text: string) => Promise<boolean>;
   onChunk: (cb: (reqId: number, data: string) => void) => () => void;
   onStderr: (cb: (reqId: number, data: string) => void) => () => void;
   onDone: (cb: (reqId: number, code: number, error: string | null) => void) => () => void;
@@ -130,6 +131,12 @@ interface ElectronAPI {
   };
   exec: (command: string, cwd?: string, timeoutMs?: number) => Promise<ExecResult>;
   claudeCode?: ClaudeCodeAPI;
+  claudeSettings?: {
+    read: (scope: 'global' | 'project') => Promise<{ ok: boolean; settings?: Record<string, unknown>; exists?: boolean; error?: string }>;
+    write: (scope: 'global' | 'project', settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+    readClaudeMd: () => Promise<{ ok: boolean; content?: string; exists?: boolean; error?: string }>;
+    writeClaudeMd: (content: string) => Promise<{ ok: boolean; error?: string }>;
+  };
 }
 
 function getAPI(): ElectronAPI | null {
@@ -270,12 +277,19 @@ export async function runClaudeCode(
 // Uses stream-json output format for full event visibility including
 // tool calls, subagent activity, and session metadata.
 
+export interface PermissionRequest {
+  reqId: number;
+  tool: string;
+  description: string;
+}
+
 export interface ClaudeCodeStreamCallbacks {
   onTextDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
   onToolResult?: (content: string, isError: boolean) => void;
   onEvent?: (event: ClaudeCodeEvent) => void;
   onStderr?: (text: string) => void;
+  onPermissionRequest?: (request: PermissionRequest) => void;
 }
 
 export async function runClaudeCodeAdvanced(
@@ -352,6 +366,20 @@ export async function runClaudeCodeAdvanced(
                   output_tokens: event.usage.output_tokens || 0,
                 };
               }
+
+            // Handle permission request — Claude Code is asking the user to approve a tool
+            } else if (event.type === 'permission_request') {
+              const toolName = (event as Record<string, unknown>).tool_name as string
+                || ((event as Record<string, unknown>).tool as Record<string, unknown>)?.name as string
+                || 'unknown';
+              const desc = (event as Record<string, unknown>).description as string
+                || (event as Record<string, unknown>).message as string
+                || `Claude wants to use ${toolName}`;
+              callbacks.onPermissionRequest?.({
+                reqId,
+                tool: toolName,
+                description: desc,
+              });
             }
           } catch {
             // Not valid JSON — might be plain text mixed in
@@ -430,6 +458,12 @@ export async function listClaudeAgents(cwd?: string): Promise<string | null> {
   return result.ok ? result.stdout : null;
 }
 
+export async function sendClaudeCodeInput(reqId: number, text: string): Promise<boolean> {
+  const api = getAPI();
+  if (!api?.claudeCode) return false;
+  return api.claudeCode.sendInput(reqId, text);
+}
+
 export async function readClaudeAgentFiles(cwd?: string): Promise<AgentFileInfo[]> {
   const api = getAPI();
   if (!api?.claudeCode) return [];
@@ -454,4 +488,46 @@ export async function abortClaudeCode(reqId: number): Promise<boolean> {
   const api = getAPI();
   if (!api?.claudeCode) return false;
   return api.claudeCode.abort(reqId);
+}
+
+// ─── Claude Code Settings & Permissions Config ────────────────────
+
+export interface ClaudePermissions {
+  allow: string[];
+  deny: string[];
+}
+
+export interface ClaudeSettingsJson {
+  permissions?: ClaudePermissions;
+  [key: string]: unknown;
+}
+
+export async function readClaudeSettings(scope: 'global' | 'project'): Promise<{ settings: ClaudeSettingsJson; exists: boolean }> {
+  const api = getAPI();
+  if (!api?.claudeSettings) return { settings: {}, exists: false };
+  const result = await api.claudeSettings.read(scope);
+  if (!result.ok) return { settings: {}, exists: false };
+  return { settings: (result.settings || {}) as ClaudeSettingsJson, exists: result.exists ?? false };
+}
+
+export async function writeClaudeSettings(scope: 'global' | 'project', settings: ClaudeSettingsJson): Promise<boolean> {
+  const api = getAPI();
+  if (!api?.claudeSettings) return false;
+  const result = await api.claudeSettings.write(scope, settings);
+  return result.ok;
+}
+
+export async function readClaudeMd(): Promise<{ content: string; exists: boolean }> {
+  const api = getAPI();
+  if (!api?.claudeSettings) return { content: '', exists: false };
+  const result = await api.claudeSettings.readClaudeMd();
+  if (!result.ok) return { content: '', exists: false };
+  return { content: result.content || '', exists: result.exists ?? false };
+}
+
+export async function writeClaudeMd(content: string): Promise<boolean> {
+  const api = getAPI();
+  if (!api?.claudeSettings) return false;
+  const result = await api.claudeSettings.writeClaudeMd(content);
+  return result.ok;
 }

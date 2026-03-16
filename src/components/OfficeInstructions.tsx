@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Agent, AgentSkill, ApiKeys, MODELS } from '../lib/types';
-import { routeTasks, executeTask, generateTodoList, OrchestrationResult, TaskAssignment } from '../lib/orchestrator';
+import { Agent, AgentSkill, /* ApiKeys, MODELS */ } from '../lib/types';
+import { /* routeTasks, executeTask, generateTodoList, OrchestrationResult, TaskAssignment, */ routeTasksViaClaudeCode } from '../lib/orchestrator';
 import { createAgent } from '../lib/storage';
 
 export interface TaskStatus {
-  assignment: TaskAssignment;
+  assignment: { agentId: string; agentName: string; task: string };
   status: 'pending' | 'running' | 'done' | 'error';
   reply?: string;
   error?: string;
@@ -20,7 +20,7 @@ export interface InstructionRun {
 
 interface OfficeInstructionsProps {
   agents: Agent[];
-  apiKeys: ApiKeys;
+  apiKeys?: Record<string, string>; // API keys disabled — kept for interface compat
   skills: AgentSkill[];
   onUpdateAgent: (agent: Agent) => void;
   onAddAgent: (agent: Agent) => void;
@@ -32,7 +32,7 @@ interface OfficeInstructionsProps {
 
 let runId = 0;
 
-export default function OfficeInstructions({ agents, apiKeys, skills, onUpdateAgent, onAddAgent, runs, setRuns, routing, setRouting }: OfficeInstructionsProps) {
+export default function OfficeInstructions({ agents, skills, onUpdateAgent, onAddAgent, runs, setRuns, routing, setRouting }: OfficeInstructionsProps) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -40,12 +40,13 @@ export default function OfficeInstructions({ agents, apiKeys, skills, onUpdateAg
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [runs]);
 
+  // API keys disabled — use Claude Code Agent Teams via the Boss chat instead
   // Pick the best available model for routing
-  function getRouterModel() {
-    if (apiKeys.openai) return { model: 'gpt-5.4' as const, provider: 'openai' as const };
-    if (apiKeys.anthropic) return { model: 'claude-sonnet-4-6' as const, provider: 'anthropic' as const };
-    return { model: 'gpt-5-mini' as const, provider: 'openai' as const };
-  }
+  // function getRouterModel() {
+  //   if (apiKeys.openai) return { model: 'gpt-5.4' as const, provider: 'openai' as const };
+  //   if (apiKeys.anthropic) return { model: 'claude-sonnet-4-6' as const, provider: 'anthropic' as const };
+  //   return { model: 'gpt-5-mini' as const, provider: 'openai' as const };
+  // }
 
   async function handleSubmit() {
     if (!input.trim() || routing) return;
@@ -57,144 +58,83 @@ export default function OfficeInstructions({ agents, apiKeys, skills, onUpdateAg
     const placeholder: InstructionRun = {
       id,
       instruction,
-      plan: 'Analyzing...',
+      plan: 'Delegating via Claude Code Agent Teams...',
       tasks: [],
       done: false,
     };
     setRuns((prev) => [...prev, placeholder]);
 
     try {
-      const result: OrchestrationResult = await routeTasks(
+      const employees = agents.filter(a => !a.isBoss);
+      const activeEmployees = [...employees];
+
+      // Use Claude Code Agent Teams for orchestration (API-key-based routeTasks disabled)
+      const result = await routeTasksViaClaudeCode(
         instruction,
-        agents,
-        apiKeys,
-        getRouterModel()
+        employees,
+        {
+          onTeamEvent: (event) => {
+            if (event.type === 'text' && event.text) {
+              setRuns((prev) =>
+                prev.map((r) => (r.id === id ? { ...r, plan: (r.plan === 'Delegating via Claude Code Agent Teams...' ? '' : r.plan) + (event.text || '') } : r))
+              );
+            }
+          },
+          onAgentStatus: (agentName, status, thought) => {
+            const emp = activeEmployees.find(a => a.name.toLowerCase() === agentName.toLowerCase());
+            if (emp) {
+              const mappedStatus = status === 'working' ? 'working'
+                : status === 'waiting-input' ? 'waiting-input'
+                : status === 'waiting-approval' ? 'waiting-approval'
+                : status === 'stuck' ? 'stuck'
+                : 'idle';
+              onUpdateAgent({
+                ...emp,
+                status: mappedStatus,
+                currentThought: thought || '',
+              });
+            }
+          },
+          onNewAgent: (agentName, description) => {
+            const newAgent = createAgent({
+              name: agentName,
+              role: description || 'Specialist',
+              personality: `You are ${agentName}, a specialist created to help with: ${description}`,
+              position: {
+                x: Math.floor(Math.random() * 10) + 2,
+                y: Math.floor(Math.random() * 6) + 2,
+              },
+            }, true);
+            activeEmployees.push(newAgent);
+            onAddAgent(newAgent);
+            onUpdateAgent({ ...newAgent, status: 'working', currentThought: `Just hired! Working on: ${description}` });
+            setRuns((prev) =>
+              prev.map((r) => (r.id === id ? { ...r, plan: r.plan + `\n\n👤 New hire: ${agentName} — ${description}` } : r))
+            );
+          },
+          onPermissionRequest: (agentName, tool, description) => {
+            if (agentName) {
+              const emp = activeEmployees.find(a => a.name.toLowerCase() === agentName.toLowerCase());
+              if (emp) {
+                onUpdateAgent({ ...emp, status: 'waiting-approval', currentThought: `🔒 Needs approval: ${tool}` });
+              }
+            }
+            setRuns((prev) =>
+              prev.map((r) => (r.id === id ? { ...r, plan: r.plan + `\n🔒 Permission needed${agentName ? ` (${agentName})` : ''}: ${tool}` } : r))
+            );
+          },
+        },
       );
 
-      // Create any new agents the router requested
-      const createdAgents: Agent[] = [];
-      for (const spec of result.newAgents) {
-        // Skip if an agent with this name already exists
-        const exists = agents.find((a) => a.name.toLowerCase() === spec.name.toLowerCase());
-        if (exists) continue;
-        const newAgent = createAgent({
-          name: spec.name,
-          role: spec.role,
-          personality: spec.personality,
-          model: getRouterModel().model,
-          provider: getRouterModel().provider,
-          position: {
-            x: Math.floor(Math.random() * 10) + 2,
-            y: Math.floor(Math.random() * 6) + 2,
-          },
-        });
-        createdAgents.push(newAgent);
-        onAddAgent(newAgent);
+      const resultText = result.text;
+
+      // Reset all employees (including dynamically-created ones) to idle
+      for (const emp of activeEmployees) {
+        onUpdateAgent({ ...emp, status: 'idle', currentThought: '' });
       }
 
-      // Build a combined agent list (existing + newly created) for resolving assignments
-      const allAgents = [...agents, ...createdAgents];
-
-      // Resolve assignment agentIds (new agents have empty agentId from router)
-      const resolvedAssignments: TaskAssignment[] = result.assignments.map((a) => {
-        if (a.agentId) return a;
-        const match = allAgents.find(
-          (ag) => ag.name.toLowerCase() === a.agentName.toLowerCase()
-        );
-        return { ...a, agentId: match?.id ?? allAgents[0]?.id ?? '' };
-      });
-
-      const tasks: TaskStatus[] = resolvedAssignments.map((a) => ({
-        assignment: a,
-        status: 'pending',
-      }));
-
       setRuns((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, plan: result.plan, tasks } : r))
-      );
-
-      // Execute tasks in parallel
-      const taskPromises = tasks.map(async (task, i) => {
-        const agent = allAgents.find((a) => a.id === task.assignment.agentId);
-        if (!agent) {
-          tasks[i] = { ...tasks[i], status: 'error', error: 'Agent not found' };
-          setRuns((prev) =>
-            prev.map((r) => (r.id === id ? { ...r, tasks: [...tasks] } : r))
-          );
-          return;
-        }
-
-        tasks[i] = { ...tasks[i], status: 'running' };
-        setRuns((prev) =>
-          prev.map((r) => (r.id === id ? { ...r, tasks: [...tasks] } : r))
-        );
-
-        // Mark agent as working
-        onUpdateAgent({ ...agent, status: 'working', currentThought: `Planning: ${task.assignment.task.slice(0, 60)}...` });
-
-        try {
-          // Generate a to-do list for this agent's task
-          const todos = await generateTodoList(agent, task.assignment.task, apiKeys, skills);
-          // Add todos to the agent (mark all in-progress since we're about to execute)
-          const agentWithTodos: Agent = {
-            ...agent,
-            todos: [
-              ...(agent.todos ?? []),
-              ...todos.map((t) => ({ ...t, status: 'in-progress' as const })),
-            ],
-          };
-          onUpdateAgent({ ...agentWithTodos, status: 'working', currentThought: `Working: ${task.assignment.task.slice(0, 60)}...` });
-
-          const { agent: updatedAgent, reply } = await executeTask(
-            agentWithTodos,
-            task.assignment.task,
-            apiKeys,
-            (partial) => {
-              onUpdateAgent({
-                ...agentWithTodos,
-                status: 'working',
-                currentThought: partial.slice(0, 80) + (partial.length > 80 ? '...' : ''),
-              });
-            },
-            undefined,
-            skills,
-            result.workingDirectory,
-          );
-
-          // Mark all todos from this batch as done
-          const todoIds = new Set(todos.map((t) => t.id));
-          const finalAgent: Agent = {
-            ...updatedAgent,
-            todos: (updatedAgent.todos ?? []).map((t) =>
-              todoIds.has(t.id) ? { ...t, status: 'done' as const } : t
-            ),
-          };
-          onUpdateAgent(finalAgent);
-          tasks[i] = { ...tasks[i], status: 'done', reply };
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : 'Unknown error';
-          tasks[i] = { ...tasks[i], status: 'error', error: errMsg };
-          // Mark todos as error
-          const latestAgent = allAgents.find((a) => a.id === agent.id) ?? agent;
-          onUpdateAgent({
-            ...latestAgent,
-            status: 'idle',
-            currentThought: '',
-            todos: (latestAgent.todos ?? []).map((t) =>
-              t.status === 'in-progress' ? { ...t, status: 'error' as const, error: errMsg } : t
-            ),
-          });
-        }
-
-        setRuns((prev) =>
-          prev.map((r) => (r.id === id ? { ...r, tasks: [...tasks] } : r))
-        );
-      });
-
-      await Promise.all(taskPromises);
-
-      setRuns((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, done: true } : r))
+        prev.map((r) => (r.id === id ? { ...r, plan: resultText || r.plan, done: true } : r))
       );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
