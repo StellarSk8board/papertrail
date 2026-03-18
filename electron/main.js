@@ -1514,6 +1514,136 @@ function setupMusicIPC() {
   });
 }
 
+// ─── Session persistence ──────────────────────────────────────────
+const os = require("os");
+const SESSIONS_DIR = path.join(os.homedir(), ".outworked", "sessions");
+
+function setupSessionIPC() {
+  // Save a full session to disk
+  ipcMain.handle("session:save", (_event, session) => {
+    try {
+      const dir = path.join(SESSIONS_DIR, session.agentId);
+      fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+      const filePath = path.join(dir, `${session.id}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(session, null, 2), {
+        encoding: "utf8",
+        mode: FILE_MODE,
+      });
+      return { ok: true };
+    } catch (err) {
+      console.error("[session:save]", err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Load a single session
+  ipcMain.handle("session:load", (_event, agentId, sessionId) => {
+    try {
+      const filePath = path.join(SESSIONS_DIR, agentId, `${sessionId}.json`);
+      if (!fs.existsSync(filePath)) return { ok: false, error: "not found" };
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      return { ok: true, session: data };
+    } catch (err) {
+      console.error("[session:load]", err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // List all sessions for an agent (metadata only, sorted by updatedAt desc)
+  ipcMain.handle("session:list", (_event, agentId) => {
+    try {
+      const dir = path.join(SESSIONS_DIR, agentId);
+      if (!fs.existsSync(dir)) return [];
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".json"))
+        .sort()
+        .reverse();
+      const metas = [];
+      for (const file of files) {
+        try {
+          const data = JSON.parse(
+            fs.readFileSync(path.join(dir, file), "utf8"),
+          );
+          metas.push({
+            id: data.id,
+            agentId: data.agentId,
+            claudeSessionId: data.claudeSessionId,
+            title: data.title,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+            messageCount: data.messageCount,
+            totalCostUsd: data.totalCostUsd,
+          });
+        } catch {
+          /* skip corrupt files */
+        }
+      }
+      // Sort by updatedAt descending
+      metas.sort((a, b) => b.updatedAt - a.updatedAt);
+      return metas;
+    } catch (err) {
+      console.error("[session:list]", err.message);
+      return [];
+    }
+  });
+
+  // Delete a session
+  ipcMain.handle("session:delete", (_event, agentId, sessionId) => {
+    try {
+      const filePath = path.join(SESSIONS_DIR, agentId, `${sessionId}.json`);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return { ok: true };
+    } catch (err) {
+      console.error("[session:delete]", err.message);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Search sessions by title or message content
+  ipcMain.handle("session:search", (_event, agentId, query) => {
+    try {
+      const dir = path.join(SESSIONS_DIR, agentId);
+      if (!fs.existsSync(dir)) return [];
+      const q = query.toLowerCase();
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+      const results = [];
+      for (const file of files) {
+        try {
+          const data = JSON.parse(
+            fs.readFileSync(path.join(dir, file), "utf8"),
+          );
+          const titleMatch = (data.title || "").toLowerCase().includes(q);
+          const msgMatch =
+            !titleMatch &&
+            (data.messages || []).some((m) =>
+              (m.content || "").toLowerCase().includes(q),
+            );
+          if (titleMatch || msgMatch) {
+            results.push({
+              id: data.id,
+              agentId: data.agentId,
+              claudeSessionId: data.claudeSessionId,
+              title: data.title,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+              messageCount: data.messageCount,
+              totalCostUsd: data.totalCostUsd,
+            });
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      results.sort((a, b) => b.updatedAt - a.updatedAt);
+      return results;
+    } catch (err) {
+      console.error("[session:search]", err.message);
+      return [];
+    }
+  });
+}
+
 function createWindow() {
   // Allow renderer to reach the AI provider APIs
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -1615,6 +1745,7 @@ app.whenReady().then(() => {
   setupFilesystemIPC();
   setupPermissionsIPC();
   setupMusicIPC();
+  setupSessionIPC();
   createWindow();
 
   // On startup, ensure the default workspace is accessible

@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { Agent, AgentSkill, SubagentDef } from './lib/types';
 import { loadAgents, saveAgents, loadSkills, saveSkills, createAgent, createClaudeAgentFile, generateAgentWithAI, resetProject, syncClaudeSubagents, upgradeAgentsToClaudeCode, parseSubagentFrontmatter } from './lib/storage';
-import { getClaudeCodeAuthStatus, isElectron, onClaudeAgentsChanged, watchProjectAgents, readClaudeSettings } from './lib/terminal';
+import { migrateHistoryToSession, loadSession } from './lib/sessions';
+import { getClaudeCodeAuthStatus, isElectron, onClaudeAgentsChanged, watchProjectAgents, readClaudeSettings, deleteClaudeAgentFile } from './lib/terminal';
 import { getWorkspace, setWorkspace } from './lib/filesystem';
 import AgentList from './components/AgentList';
 import AgentEditor from './components/AgentEditor';
@@ -34,6 +35,7 @@ export default function App() {
   const [showPermsModal, setShowPermsModal] = useState(false);
   const [permsEmpty, setPermsEmpty] = useState(false);
   const [permsDismissed, setPermsDismissed] = useState(false);
+  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('outworked_debug') === '1');
   const [orchToast, setOrchToast] = useState<OrchestrationDoneEvent | null>(null);
 
   useEffect(() => {
@@ -83,6 +85,21 @@ export default function App() {
         }
       }
 
+      // Migrate any existing in-memory history to sessions (one-time)
+      const migrated = localStorage.getItem('outworked_sessions_migrated');
+      if (!migrated) {
+        const rawAgents = (() => { try { const r = localStorage.getItem('outworked_agents'); return r ? JSON.parse(r) : []; } catch { return []; } })();
+        for (const raw of rawAgents) {
+          if (raw.history && raw.history.length > 0 && !raw.currentSessionId) {
+            const session = await migrateHistoryToSession(raw.id, raw.history, raw.sessionId);
+            if (session) {
+              setAgents(prev => prev.map(a => a.id === raw.id ? { ...a, currentSessionId: session.id, history: session.messages } : a));
+            }
+          }
+        }
+        localStorage.setItem('outworked_sessions_migrated', '1');
+      }
+
       setStartupDone(true);
 
       // Check whether any permission rules exist
@@ -112,6 +129,20 @@ export default function App() {
   }, []);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) ?? null;
+
+  // Hydrate session from disk when selecting an agent with a saved session but empty history
+  useEffect(() => {
+    if (!selectedAgent?.currentSessionId || selectedAgent.history.length > 0) return;
+    loadSession(selectedAgent.id, selectedAgent.currentSessionId).then(session => {
+      if (session) {
+        setAgents(prev => prev.map(a =>
+          a.id === selectedAgent.id
+            ? { ...a, history: session.messages, sessionId: session.claudeSessionId }
+            : a
+        ));
+      }
+    });
+  }, [selectedAgentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateAgent = useCallback((updated: Agent) => {
     setAgents((prev) => {
@@ -197,6 +228,10 @@ export default function App() {
   function handleDeleteAgent(agentId: string) {
     const agent = agents.find((a) => a.id === agentId);
     if (agent?.isBoss) return; // boss cannot be deleted
+    // Delete the .claude/agents/*.md file on disk so it doesn't get re-synced
+    if (agent?.subagentFile) {
+      deleteClaudeAgentFile(agent.subagentFile);
+    }
     const next = agents.filter((a) => a.id !== agentId);
     setAgents(next);
     saveAgents(next);
@@ -214,6 +249,14 @@ export default function App() {
   const handleUpdateSkills = useCallback((updated: AgentSkill[]) => {
     setSkills(updated);
     saveSkills(updated);
+  }, []);
+
+  const toggleDebug = useCallback(() => {
+    setDebugMode(prev => {
+      const next = !prev;
+      localStorage.setItem('outworked_debug', next ? '1' : '0');
+      return next;
+    });
   }, []);
 
   const handleOrchestrationDone = useCallback((event: OrchestrationDoneEvent) => {
@@ -293,12 +336,20 @@ export default function App() {
           >
             🔒 Permissions
           </button>
-          <button
-            onClick={handleNewProject}
-            className="w-full btn-pixel text-[10px] bg-red-800 hover:bg-red-700 text-red-100"
-          >
-            New Project
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={toggleDebug}
+              className={`flex-1 btn-pixel text-[10px] ${debugMode ? 'bg-amber-700 hover:bg-amber-600 text-amber-50' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
+            >
+              🐛 Debug {debugMode ? 'ON' : 'OFF'}
+            </button>
+            <button
+              onClick={handleNewProject}
+              className="flex-1 btn-pixel text-[10px] bg-red-800 hover:bg-red-700 text-red-100"
+            >
+              New Project
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -436,6 +487,7 @@ export default function App() {
                 onAddAgent={handleAddDynamicAgent}
                 agentTeamsEnabled={agentTeamsEnabled}
                 onOrchestrationDone={handleOrchestrationDone}
+                debugMode={debugMode}
               />
             ) : rightPanel === 'editor' && selectedAgent ? (
               <AgentEditor

@@ -42,7 +42,9 @@ export function loadAgents(): Agent[] {
 
 export function saveAgents(agents: Agent[]): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(AGENTS_KEY, JSON.stringify(agents));
+  // Strip message history from localStorage — sessions are persisted separately on disk
+  const light = agents.map(a => ({ ...a, history: [] }));
+  localStorage.setItem(AGENTS_KEY, JSON.stringify(light));
 }
 
 export function createAgent(partial: Partial<Agent>, claudeCodeDefault?: boolean): Agent {
@@ -85,7 +87,7 @@ export function saveSkills(skills: AgentSkill[]): void {
 }
 
 export function resetProject(agents: Agent[]): Agent[] {
-  const cleared = agents.map((a) => ({ ...a, history: [], todos: [], status: 'idle' as const, currentThought: '' }));
+  const cleared = agents.map((a) => ({ ...a, history: [], todos: [], status: 'idle' as const, currentThought: '', currentSessionId: undefined, sessionId: undefined }));
   saveAgents(cleared);
   if (typeof window !== 'undefined') localStorage.removeItem('outworked_selected_agent');
   return cleared;

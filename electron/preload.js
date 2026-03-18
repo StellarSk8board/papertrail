@@ -99,6 +99,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.send("claude-code:watchProjectAgents", projectDir),
   },
 
+  // Session persistence
+  sessions: {
+    save: (session) => ipcRenderer.invoke("session:save", session),
+    load: (agentId, sessionId) =>
+      ipcRenderer.invoke("session:load", agentId, sessionId),
+    list: (agentId) => ipcRenderer.invoke("session:list", agentId),
+    delete: (agentId, sessionId) =>
+      ipcRenderer.invoke("session:delete", agentId, sessionId),
+    search: (agentId, query) =>
+      ipcRenderer.invoke("session:search", agentId, query),
+  },
+
   // Music
   music: {
     listTracks: () => ipcRenderer.invoke("music:listTracks"),

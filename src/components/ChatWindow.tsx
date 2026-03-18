@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
-import { Agent, AgentSkill, AgentTodo, /* ApiKeys, */ Message, MODELS, ToolCall } from '../lib/types';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Agent, AgentSkill, AgentTodo, /* ApiKeys, */ Message, MODELS, SessionMeta, ToolCall } from '../lib/types';
 import { sendMessage } from '../lib/ai';
 import { executeTask, generateTodoList, routeTasks } from '../lib/orchestrator';
 import { createAgent, createClaudeAgentFile } from '../lib/storage';
 import { sendClaudeCodeInput, PermissionRequest } from '../lib/terminal';
+import { createSession, saveSession, loadSession, listSessions, deleteSession, searchSessions } from '../lib/sessions';
 
 export interface OrchestrationDoneEvent {
   success: number;
@@ -20,18 +21,22 @@ interface ChatWindowProps {
   onAddAgent: (agent: Agent) => void;
   agentTeamsEnabled?: boolean;
   onOrchestrationDone?: (event: OrchestrationDoneEvent) => void;
+  debugMode: boolean;
 }
 
 const EMPTY_KEYS = { openai: '', anthropic: '', gemini: '', github: '' };
 
-export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAddAgent, agentTeamsEnabled, onOrchestrationDone }: ChatWindowProps) {
+export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAddAgent, agentTeamsEnabled, onOrchestrationDone, debugMode }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
-  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('outworked_debug') === '1');
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessionList, setSessionList] = useState<SessionMeta[]>([]);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const debugBottomRef = useRef<HTMLDivElement>(null);
@@ -41,11 +46,86 @@ export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAdd
     setDebugLog(prev => [...prev.slice(-500), `[${ts}] ${line}`]);
   }
 
-  function toggleDebug() {
-    const next = !debugMode;
-    setDebugMode(next);
-    localStorage.setItem('outworked_debug', next ? '1' : '0');
-    if (next) setShowDebug(true);
+  // Auto-show debug panel when debug mode is turned on
+  useEffect(() => {
+    if (debugMode) setShowDebug(true);
+  }, [debugMode]);
+
+  // Load session list when history panel opens or agent changes
+  const refreshSessionList = useCallback(async () => {
+    if (!agent) return;
+    const list = sessionSearch
+      ? await searchSessions(agent.id, sessionSearch)
+      : await listSessions(agent.id);
+    setSessionList(list);
+  }, [agent?.id, sessionSearch]);
+
+  useEffect(() => {
+    if (showHistory && agent) refreshSessionList();
+  }, [showHistory, agent?.id, refreshSessionList]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!showHistory) return;
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => refreshSessionList(), 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [sessionSearch, showHistory, refreshSessionList]);
+
+  // Save current session to disk
+  async function persistSession(agentState: Agent) {
+    if (!agentState.currentSessionId || agentState.history.length === 0) return;
+    await saveSession({
+      id: agentState.currentSessionId,
+      agentId: agentState.id,
+      claudeSessionId: agentState.sessionId,
+      title: agentState.history.find(m => m.role === 'user')?.content.slice(0, 50) || 'Conversation',
+      createdAt: agentState.history[0]?.timestamp || Date.now(),
+      updatedAt: Date.now(),
+      messageCount: agentState.history.length,
+      messages: agentState.history,
+    });
+  }
+
+  // Start a new chat (save current, clear history)
+  async function handleNewChat() {
+    if (!agent) return;
+    await persistSession(agent);
+    onUpdateAgent({
+      ...agent,
+      history: [],
+      currentSessionId: undefined,
+      sessionId: undefined,
+      currentThought: '',
+    });
+    setShowHistory(false);
+  }
+
+  // Resume a past session
+  async function handleResumeSession(meta: SessionMeta) {
+    if (!agent) return;
+    // Save current session first
+    await persistSession(agent);
+    // Load the selected session
+    const session = await loadSession(meta.agentId, meta.id);
+    if (!session) return;
+    onUpdateAgent({
+      ...agent,
+      history: session.messages,
+      currentSessionId: session.id,
+      sessionId: session.claudeSessionId,
+    });
+    setShowHistory(false);
+  }
+
+  // Delete a session from history
+  async function handleDeleteSession(meta: SessionMeta) {
+    await deleteSession(meta.agentId, meta.id);
+    // If we just deleted the active session, clear it
+    if (agent?.currentSessionId === meta.id) {
+      onUpdateAgent({ ...agent, history: [], currentSessionId: undefined, sessionId: undefined });
+    }
+    refreshSessionList();
   }
 
   useEffect(() => {
@@ -73,11 +153,20 @@ export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAdd
     setStreamingText('');
 
     const userMsg: Message = { role: 'user', content: userText, timestamp: Date.now() };
+
+    // Create a new session if this is the first message
+    let sessionId = agent.currentSessionId;
+    if (!sessionId) {
+      const session = createSession(agent.id, userText);
+      sessionId = session.id;
+    }
+
     const updatedWithUser: Agent = {
       ...agent,
       history: [...agent.history, userMsg],
       status: 'thinking',
       currentThought: 'Thinking...',
+      currentSessionId: sessionId,
     };
     onUpdateAgent(updatedWithUser);
 
@@ -103,12 +192,15 @@ export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAdd
       }
 
       const assistantMsg: Message = { role: 'assistant', content: reply, timestamp: Date.now() };
-      onUpdateAgent({
+      const finalAgent: Agent = {
         ...updatedWithUser,
         history: [...updatedWithUser.history, assistantMsg],
         status: 'idle',
         currentThought: reply.slice(0, 80) + (reply.length > 80 ? '...' : ''),
-      });
+      };
+      onUpdateAgent(finalAgent);
+      // Persist session to disk
+      persistSession(finalAgent);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       if (errorMsg !== 'AbortError') {
@@ -431,24 +523,80 @@ export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAdd
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-600 bg-slate-900">
-        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: agent.color }} />
+        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: agent.color }} />
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-pixel text-white truncate">{agent.name}</p>
-          <p className="text-[11px] font-pixel truncate" style={{ color: agent.color }}>{agent.role}</p>
+          <p className="text-xs font-pixel text-white truncate">{agent.name} <span className="text-slate-500 font-normal">· {agent.role}</span></p>
         </div>
-        <span className="text-[11px] font-pixel text-slate-400 shrink-0">
-          {agent.subagentFile ? '⚡ Claude Code' : model?.label ?? agent.model}
-        </span>
-        <button
-          onClick={toggleDebug}
-          className={`text-[9px] px-1.5 py-0.5 rounded font-pixel transition-colors ${
-            debugMode ? 'bg-amber-700 text-amber-100' : 'bg-slate-800 text-slate-500 hover:text-slate-300'
-          }`}
-          title={debugMode ? 'Debug ON — click to disable' : 'Enable debug mode'}
-        >
-          🐛
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={handleNewChat}
+            className="text-[9px] px-1.5 py-0.5 rounded font-pixel bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+            title="Start new conversation"
+          >
+            +
+          </button>
+          <button
+            onClick={() => { setShowHistory(!showHistory); if (!showHistory) refreshSessionList(); }}
+            className={`text-[9px] px-1.5 py-0.5 rounded font-pixel transition-colors ${
+              showHistory ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+            }`}
+            title="Session history"
+          >
+            ⏱
+          </button>
+        </div>
       </div>
+
+      {/* Session history drawer */}
+      {showHistory && (
+        <div className="border-b border-slate-600 bg-slate-950/95 max-h-52 flex flex-col">
+          <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-slate-800/60">
+            <input
+              type="text"
+              value={sessionSearch}
+              onChange={e => setSessionSearch(e.target.value)}
+              placeholder="Search…"
+              className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded px-2 py-0.5 text-[10px] font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            />
+            <button
+              onClick={handleNewChat}
+              className="text-[9px] px-2 py-0.5 rounded font-pixel bg-indigo-700 hover:bg-indigo-600 text-white transition-colors shrink-0"
+            >
+              New chat
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {sessionList.length === 0 && (
+              <p className="text-[10px] font-pixel text-slate-500 text-center py-3">
+                {sessionSearch ? 'No matches' : 'No past conversations'}
+              </p>
+            )}
+            {sessionList.map(meta => (
+              <button
+                key={meta.id}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-800/60 border-b border-slate-800/30 group transition-colors ${
+                  agent?.currentSessionId === meta.id ? 'bg-indigo-950/30 border-l-2 border-l-indigo-500' : 'border-l-2 border-l-transparent'
+                }`}
+                onClick={() => handleResumeSession(meta)}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-mono text-slate-300 truncate">{meta.title}</p>
+                  <p className="text-[9px] text-slate-500">
+                    {new Date(meta.updatedAt).toLocaleDateString()} · {meta.messageCount} msg{meta.messageCount !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <span
+                  onClick={e => { e.stopPropagation(); handleDeleteSession(meta); }}
+                  className="text-[9px] text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shrink-0 px-1"
+                  title="Delete"
+                >
+                  ✕
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Status — enhanced for waiting/stuck states */}
       {(agent.status === 'stuck' || agent.status === 'waiting-input' || agent.status === 'waiting-approval') && (
@@ -510,7 +658,6 @@ export default function ChatWindow({ agent, agents, skills, onUpdateAgent, onAdd
         {agent.isBoss && (
           <div className="text-center pt-4">
             <p className="text-[11px] font-pixel text-slate-400">Boss will assign tasks to the right agents. Just tell Boss what you need.</p>
-            <p className="text-[11px] font-pixel text-slate-400">Boss can also hire new agents if needed.</p>
           </div>
         )}
 

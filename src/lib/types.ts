@@ -45,6 +45,29 @@ export interface Message {
   timestamp: number;
 }
 
+export interface Session {
+  id: string;
+  agentId: string;
+  claudeSessionId?: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  totalCostUsd?: number;
+  messages: Message[];
+}
+
+export interface SessionMeta {
+  id: string;
+  agentId: string;
+  claudeSessionId?: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  totalCostUsd?: number;
+}
+
 export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -118,6 +141,7 @@ export interface Agent {
   subagentDef?: SubagentDef; // parsed subagent definition
   agentScope?: AgentScope; // 'user' (~/.claude/agents/) or 'project' (.claude/agents/)
   sessionId?: string; // Claude Code session ID for continuity
+  currentSessionId?: string; // active Outworked session ID (for persistence)
 }
 
 export interface ApiKeys {
