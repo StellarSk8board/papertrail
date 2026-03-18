@@ -1,11 +1,11 @@
 import { AgentSkill, SkillMetadata } from './types';
 
 /**
- * Parse an OpenClaw SKILL.md file into an AgentSkill.
- * Handles YAML frontmatter with name, description, and metadata.openclaw fields.
+ * Parse a SKILL.md file into an AgentSkill.
+ * Handles YAML frontmatter with name, description, and metadata fields.
  * The markdown body (after frontmatter) becomes the skill content.
  */
-export function parseOpenClawSkill(raw: string): AgentSkill {
+export function parseSkill(raw: string): AgentSkill {
   const { frontmatter, body } = extractFrontmatter(raw);
 
   const name = extractField(frontmatter, 'name') || 'Unnamed Skill';
@@ -23,9 +23,9 @@ export function parseOpenClawSkill(raw: string): AgentSkill {
 }
 
 /**
- * Detect whether raw text looks like an OpenClaw SKILL.md (has --- frontmatter).
+ * Detect whether raw text looks like a SKILL.md (has --- frontmatter).
  */
-export function isOpenClawFormat(raw: string): boolean {
+export function isSkillFormat(raw: string): boolean {
   const trimmed = raw.trimStart();
   return trimmed.startsWith('---');
 }
@@ -69,7 +69,7 @@ function extractField(fm: string, key: string): string | null {
 }
 
 /**
- * Extract a nested field from the metadata/openclaw section.
+ * Extract a nested field from the metadata section.
  * Handles both YAML style and JSON-in-YAML style.
  */
 function extractNestedField(fm: string, key: string): string | null {
@@ -91,13 +91,12 @@ function extractNestedField(fm: string, key: string): string | null {
 }
 
 /**
- * Parse the openclaw metadata block from frontmatter.
+ * Parse the metadata block from frontmatter.
  * Extracts requires (bins/anyBins), install instructions, and os constraints.
  */
 function parseMetadata(fm: string): SkillMetadata | null {
   if(!fm) return null;
   if(!fm.includes('metadata')) return null;
-  // if (!fm.includes('openclaw')) return null;
 
   const meta: SkillMetadata = {};
 
@@ -208,22 +207,4 @@ function parseInstallBlocks(fm: string): SkillMetadata['install'] {
   }
 
   return installs.length ? installs : undefined;
-}
-
-/**
- * List bundled skill names available in src/basic-skills/.
- */
-export function listBundledSkillNames(): string[] {
-  return [
-    'apple-notes',
-    'apple-reminders',
-    'coding-agent',
-    'gemini',
-    'github',
-    'gog',
-    'imsg',
-    'mcporter',
-    'nano-pdf',
-    'openai-whisper',
-  ];
 }

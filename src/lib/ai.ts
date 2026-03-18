@@ -2,6 +2,7 @@ import { Agent, AgentSkill, ApiKeys, Message, ToolCall } from './types';
 import { AGENT_TOOLS, ToolDefinition, executeTool } from './tools';
 import { getWorkspace } from './filesystem';
 import { runClaudeCode, runClaudeCodeAdvanced, ClaudeCodeAdvancedOptions, ClaudeCodeStreamCallbacks, PermissionRequest } from './terminal';
+import { getBundledSkill } from './bundled-skills';
 
 function buildToolPreamble(workspace: string): string {
   return `
@@ -34,11 +35,18 @@ You can have multiple files open at once, but only one terminal command running 
 
 function buildSystemPrompt(agent: Agent, withTools: boolean, workspace = '', skills: AgentSkill[] = []): string {
   let prompt = agent.personality;
-  // Combine app-level skills + any agent-level skills (legacy)
-  const allSkills = [...skills, ...agent.skills];
-  if (allSkills.length > 0) {
+  // Resolve per-agent skill names (from subagentDef) into actual skill objects
+  const agentDefSkills: AgentSkill[] = (agent.subagentDef?.skills || [])
+    .map((name) => getBundledSkill(name))
+    .filter((s): s is AgentSkill => s !== undefined);
+  // Combine: app-level skills + agent-level skills from subagentDef + legacy agent.skills
+  const allSkills = [...skills, ...agentDefSkills, ...agent.skills];
+  // Deduplicate by id
+  const seen = new Set<string>();
+  const uniqueSkills = allSkills.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
+  if (uniqueSkills.length > 0) {
     prompt += '\n\n## Skills\n';
-    for (const skill of allSkills) {
+    for (const skill of uniqueSkills) {
       prompt += `\n### ${skill.name}\n${skill.content}\n`;
     }
   }

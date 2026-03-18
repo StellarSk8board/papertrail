@@ -11,7 +11,7 @@ import nanoPdfRaw from '../basic-skills/nano-pdf/SKILL.md?raw';
 import openaiWhisperRaw from '../basic-skills/openai-whisper/SKILL.md?raw';
 
 import { AgentSkill } from './types';
-import { parseOpenClawSkill } from './skill-parser';
+import { parseSkill } from './skill-parser';
 
 const BUNDLED_RAW: Record<string, string> = {
   'apple-notes': appleNotesRaw,
@@ -36,7 +36,7 @@ export function getBundledSkills(): AgentSkill[] {
   if (_cache) return _cache;
 
   _cache = Object.entries(BUNDLED_RAW).map(([slug, raw]) => {
-    const skill = parseOpenClawSkill(raw);
+    const skill = parseSkill(raw);
     // Use a deterministic ID so bundled skills stay stable across reloads
     skill.id = `bundled:${slug}`;
     return skill;
