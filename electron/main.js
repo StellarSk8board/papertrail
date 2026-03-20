@@ -13,6 +13,7 @@ const path = require("path");
 const fs = require("fs");
 const { spawn, execSync, execFileSync } = require("child_process");
 const crypto = require("crypto");
+const sdkBridge = require("./sdk-bridge");
 
 // Set the app name early so macOS notifications show "Outworked" instead of "Electron"
 app.setName("Outworked");
@@ -161,65 +162,12 @@ function augmentedEnv(extra) {
   return { ...process.env, PATH: newPath, ...(extra || {}) };
 }
 
-// ─── Resolve claude binary path ─────────────────────────────────
-// Find the full path to the `claude` CLI via the login shell so we
-// can spawn it directly (without a shell) and avoid all escaping
-// issues with complex system prompts and JSON arguments.
-let _claudeBinPath = null;
-let _claudeBinResolved = false;
-
-function resolveClaudeBin() {
-  if (_claudeBinResolved) return _claudeBinPath;
-  _claudeBinResolved = true;
-
-  if (process.platform === "win32") {
-    try {
-      _claudeBinPath =
-        execSync("where claude", { encoding: "utf8", timeout: 5000 })
-          .trim()
-          .split("\n")[0] || null;
-    } catch {}
-    return _claudeBinPath;
-  }
-
-  try {
-    _claudeBinPath =
-      execSync(`${SHELL_CMD} -l -c 'command -v claude'`, {
-        encoding: "utf8",
-        timeout: 10000,
-        env: augmentedEnv({ TERM: "dumb" }),
-      }).trim() || null;
-  } catch {}
-
-  if (!_claudeBinPath) {
-    const home = process.env.HOME || "";
-    for (const p of [
-      path.join(home, ".local", "bin", "claude"),
-      path.join(home, ".claude", "bin", "claude"),
-      "/usr/local/bin/claude",
-    ]) {
-      try {
-        fs.accessSync(p, fs.constants.X_OK);
-        _claudeBinPath = p;
-        break;
-      } catch {}
-    }
-  }
-
-  if (_claudeBinPath) {
-    console.log(`[resolveClaudeBin] Found claude at: ${_claudeBinPath}`);
-  } else {
-    console.warn("[resolveClaudeBin] Could not find 'claude' binary");
-  }
-  return _claudeBinPath;
-}
-
 // GitHub token injected by renderer after loading API keys
 let githubToken = "";
 
 // ─── Shell process management ─────────────────────────────────────
 const shells = new Map(); // id → { proc, cwd }
-const claudeProcs = new Map(); // reqId → ChildProcess
+// SDK bridge manages active sessions (replaces the old claudeProcs Map)
 
 // ─── Caffeinate: prevent sleep while tasks are in flight ──────────
 let caffeinateBlockerId = null;
@@ -243,9 +191,9 @@ function caffeineStop() {
   caffeinateBlockerId = null;
 }
 
-/** Call after adding/removing from claudeProcs to sync caffeinate state. */
+/** Call after adding/removing sessions to sync caffeinate state. */
 function syncCaffeinate() {
-  if (claudeProcs.size > 0) caffeineStart();
+  if (sdkBridge.hasActiveSessions()) caffeineStart();
   else caffeineStop();
 }
 
@@ -417,11 +365,11 @@ function setupShellIPC() {
   // Prompt is piped via stdin to avoid shell-escaping pitfalls.
   // System prompt is passed via an env var to avoid quoting issues.
 
+  // claude-code:start — basic mode, routed through SDK bridge
   ipcMain.handle(
     "claude-code:start",
     (_event, prompt, systemPrompt, cwd, timeoutMs) => {
       const reqId = crypto.randomUUID();
-
       const execCwd = cwd || process.env.HOME;
       try {
         ensureDirWritable(execCwd);
@@ -429,95 +377,26 @@ function setupShellIPC() {
         /* best-effort */
       }
 
-      const isWin = process.platform === "win32";
-      const cmd = systemPrompt
-        ? 'claude -p --output-format text --system-prompt "$OUTWORKED_SYS"'
-        : "claude -p --output-format text";
-
-      const proc = isWin
-        ? spawn("cmd.exe", ["/c", cmd], {
-            cwd: execCwd,
-            env: augmentedEnv({
-              TERM: "dumb",
-              OUTWORKED_SYS: systemPrompt || "",
-            }),
-            timeout: timeoutMs || 0,
-          })
-        : spawn(SHELL_CMD, ["-l", "-c", cmd], {
-            cwd: execCwd,
-            env: augmentedEnv({
-              TERM: "dumb",
-              OUTWORKED_SYS: systemPrompt || "",
-            }),
-            timeout: timeoutMs || 0,
-          });
-
-      claudeProcs.set(reqId, proc);
+      console.log(`[claude-code:start] reqId=${reqId} cwd=${execCwd}`);
       syncCaffeinate();
 
-      let stderrBuf = "";
-      console.log(
-        `[claude-code:start] reqId=${reqId} cwd=${execCwd} cmd=${cmd}`,
-      );
-
-      // Pipe prompt through stdin (no shell escaping needed)
-      proc.stdin.write(prompt);
-      proc.stdin.end();
-
-      proc.stdout.on("data", (data) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(
-            "claude-code:chunk",
-            reqId,
-            data.toString(),
-          );
-        }
-      });
-
-      proc.stderr.on("data", (data) => {
-        const text = data.toString();
-        stderrBuf += text;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("claude-code:stderr", reqId, text);
-        }
-      });
-
-      proc.on("error", (err) => {
-        claudeProcs.delete(reqId);
-        syncCaffeinate();
-        console.error(
-          `[claude-code:start] reqId=${reqId} error: ${err.message}`,
-        );
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(
-            "claude-code:done",
-            reqId,
-            -1,
-            err.message,
-          );
-        }
-      });
-
-      proc.on("close", (code) => {
-        claudeProcs.delete(reqId);
-        syncCaffeinate();
-        if (code !== 0) {
-          console.error(
-            `[claude-code:start] reqId=${reqId} exited with code ${code}`,
-          );
-          if (stderrBuf)
-            console.error(
-              `[claude-code:start] stderr: ${stderrBuf.slice(0, 2000)}`,
-            );
-        }
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(
-            "claude-code:done",
-            reqId,
-            code ?? -1,
-            code !== 0 && stderrBuf ? stderrBuf.slice(0, 2000) : null,
-          );
-        }
+      sdkBridge.startSession(reqId, {
+        prompt,
+        cwd: execCwd,
+        systemPrompt: systemPrompt || undefined,
+        timeoutMs: timeoutMs || undefined,
+      }, {
+        onMessage: (id, message) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("claude-code:event", id, message);
+          }
+        },
+        onDone: (id, code, error) => {
+          syncCaffeinate();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("claude-code:done", id, code, error);
+          }
+        },
       });
 
       return reqId;
@@ -525,25 +404,16 @@ function setupShellIPC() {
   );
 
   ipcMain.handle("claude-code:abort", (_event, reqId) => {
-    const proc = claudeProcs.get(reqId);
-    if (proc && !proc.killed) {
-      proc.kill();
-      claudeProcs.delete(reqId);
-      syncCaffeinate();
-      return true;
-    }
-    return false;
+    const aborted = sdkBridge.abortSession(reqId);
+    if (aborted) syncCaffeinate();
+    return aborted;
   });
 
-  // ─── Advanced Claude Code integration ──────────────────────────
-  // Rich mode with stream-json output, subagent support, session
-  // management, tool visibility, and agent teams.
+  // ─── Advanced Claude Code integration (via SDK) ─────────────────
+  // Uses @anthropic-ai/claude-agent-sdk instead of spawning the CLI.
+  // SDK messages are JSON-stringified and sent over the existing
+  // claude-code:chunk IPC channel for backward compatibility.
 
-  // Start an advanced Claude Code session with stream-json output
-  // Options: { prompt, cwd, systemPrompt, appendSystemPrompt, model,
-  //   allowedTools, disallowedTools, maxTurns, maxBudget, continueSession,
-  //   resumeSessionId, agents (JSON subagent defs), outputFormat, verbose,
-  //   permissionMode, dangerouslySkipPermissions }
   ipcMain.handle("claude-code:startAdvanced", (_event, options) => {
     const reqId = crypto.randomUUID();
     const execCwd = options.cwd || process.env.HOME;
@@ -553,268 +423,59 @@ function setupShellIPC() {
       /* best-effort */
     }
 
-    // Build the command line from options
-    const args = ["-p"];
-
-    // Output format: stream-json for full event visibility
-    const outputFormat = options.outputFormat || "stream-json";
-    args.push("--output-format", outputFormat);
-
-    // --verbose is required when using stream-json with -p mode
-    if (options.verbose === true || outputFormat === "stream-json") {
-      args.push("--verbose");
-    }
-
-    // NOTE: --include-partial-messages was removed for performance.
-    // It causes O(n²) IPC traffic because each partial event contains the
-    // full accumulated text, not just the delta.  The stream-json format
-    // already provides tool_use, result, and other events we need.
-
-    // Model selection
-    if (options.model) {
-      args.push("--model", options.model);
-    }
-
-    // System prompt — values passed directly in the args array.
-    // We spawn claude without a shell, so no escaping is needed.
-    if (options.systemPrompt) {
-      args.push("--system-prompt", options.systemPrompt);
-    }
-    if (options.appendSystemPrompt) {
-      args.push("--append-system-prompt", options.appendSystemPrompt);
-    }
-
-    // Tool permissions
-    if (options.allowedTools && options.allowedTools.length > 0) {
-      for (const tool of options.allowedTools) {
-        args.push("--allowedTools", tool);
-      }
-    }
-    if (options.disallowedTools && options.disallowedTools.length > 0) {
-      for (const tool of options.disallowedTools) {
-        args.push("--disallowedTools", tool);
-      }
-    }
-
-    // Limits
-    if (options.maxTurns) {
-      args.push("--max-turns", String(options.maxTurns));
-    }
-    if (options.maxBudget) {
-      args.push("--max-budget-usd", String(options.maxBudget));
-    }
-
-    // Session management — prefer --resume with explicit ID over --continue,
-    // since --continue only reconnects the most recent session which may not
-    // match what the UI expects.
-    if (options.resumeSessionId) {
-      args.push("--resume", options.resumeSessionId);
-    } else if (options.continueSession) {
-      args.push("--continue");
-    }
-
-    // Subagent definitions — passed directly as JSON string
-    if (options.agents) {
-      args.push("--agents", JSON.stringify(options.agents));
-    }
-
-    // Permission mode
-    if (options.permissionMode) {
-      args.push("--permission-mode", options.permissionMode);
-    }
-    if (options.dangerouslySkipPermissions) {
-      args.push("--dangerously-skip-permissions");
-    }
-
-    // Tools restriction
-    if (options.tools) {
-      args.push("--tools", options.tools);
-    }
-
-    // MCP Servers — write inline definitions to a temp config file and pass --mcp-config
-    let mcpConfigPath = null;
-    if (options.mcpServers && options.mcpServers.length > 0) {
-      const mcpObj = {};
-      for (const entry of options.mcpServers) {
-        if (typeof entry === "string") {
-          // String reference — assume it's a globally-configured server name.
-          // We still include it so Claude Code knows to enable it for this session.
-          // Use an empty object as a placeholder; Claude Code will resolve from settings.
-          mcpObj[entry] = {};
-        } else {
-          for (const [name, cfg] of Object.entries(entry)) {
-            mcpObj[name] = {};
-            if (cfg.type) mcpObj[name].type = cfg.type;
-            if (cfg.command) mcpObj[name].command = cfg.command;
-            if (cfg.args) mcpObj[name].args = cfg.args;
-            if (cfg.url) mcpObj[name].url = cfg.url;
-          }
-        }
-      }
-      if (Object.keys(mcpObj).length > 0) {
-        const tmpDir = path.join(app.getPath("temp"), "outworked-mcp");
-        try {
-          fs.mkdirSync(tmpDir, { recursive: true });
-        } catch {
-          /* best effort */
-        }
-        mcpConfigPath = path.join(tmpDir, `mcp-${reqId}.json`);
-        fs.writeFileSync(
-          mcpConfigPath,
-          JSON.stringify({ mcpServers: mcpObj }, null, 2),
-          { mode: FILE_MODE },
-        );
-        args.push("--mcp-config", mcpConfigPath);
-        console.log(
-          `[claude-code:startAdvanced] MCP config written to ${mcpConfigPath}`,
-        );
-      }
-    }
-
-    // Agent teams — enabled via env var CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
-
-    const envVars = augmentedEnv({
-      TERM: "dumb",
-      ...(githubToken
-        ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken }
-        : {}),
-      ...(options.enableAgentTeams
-        ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
-        : {}),
-    });
-
-    // Resolve the claude binary and spawn directly — no shell, no escaping.
-    // This avoids all issues with special characters in system prompts,
-    // multi-line markdown, nested JSON in --agents, etc.
-    const claudeBin = resolveClaudeBin();
-    if (!claudeBin) {
-      console.error(
-        "[claude-code:startAdvanced] Could not find 'claude' binary",
-      );
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(
-          "claude-code:done",
-          reqId,
-          -1,
-          "Could not find the 'claude' CLI. Is it installed?",
-        );
-      }
-      return reqId;
-    }
-
-    const proc = spawn(claudeBin, args, {
-      cwd: execCwd,
-      env: envVars,
-      timeout: options.timeoutMs || 0,
-    });
-
     console.log(
-      `[claude-code:startAdvanced] reqId=${reqId} cwd=${execCwd} bin=${claudeBin}`,
-    );
-    console.log(
-      `[claude-code:startAdvanced] args=${JSON.stringify(args.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)))}`,
+      `[claude-code:startAdvanced] reqId=${reqId} cwd=${execCwd} model=${options.model || "default"}`,
     );
 
-    claudeProcs.set(reqId, proc);
     syncCaffeinate();
 
-    let stderrBuf = "";
-
-    // Pipe prompt through stdin, then close it with EOF so Claude starts
-    // processing. In -p mode, stdin must be closed to signal end-of-input;
-    // there is no way to send follow-up data (e.g. permission responses)
-    // after this point because the stream is already ended. Permission
-    // handling therefore relies on the --permission-mode flag and the
-    // project's .claude/settings.json rules, not on interactive stdin.
-    if (options.prompt) {
-      proc.stdin.write(options.prompt);
-      proc.stdin.write("\n");
+    // Pass GitHub token through options so sdk-bridge can inject it into env
+    const sessionOptions = { ...options, cwd: execCwd };
+    if (githubToken) {
+      sessionOptions.githubToken = githubToken;
     }
-    proc.stdin.end();
 
-    proc.stdout.on("data", (data) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(
-          "claude-code:chunk",
-          reqId,
-          data.toString(),
-        );
-      }
-    });
-
-    proc.stderr.on("data", (data) => {
-      const text = data.toString();
-      stderrBuf += text;
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("claude-code:stderr", reqId, text);
-      }
-    });
-
-    // Helper to clean up temp MCP config file
-    function cleanupMcpConfig() {
-      if (mcpConfigPath) {
-        try {
-          fs.unlinkSync(mcpConfigPath);
-        } catch {
-          /* already gone */
+    sdkBridge.startSession(reqId, sessionOptions, {
+      onMessage: (id, message) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("claude-code:event", id, message);
         }
-      }
-    }
-
-    proc.on("error", (err) => {
-      claudeProcs.delete(reqId);
-      syncCaffeinate();
-      cleanupMcpConfig();
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("claude-code:done", reqId, -1, err.message);
-      }
-    });
-
-    proc.on("close", (code, signal) => {
-      claudeProcs.delete(reqId);
-      syncCaffeinate();
-      cleanupMcpConfig();
-      if (code !== 0) {
-        console.error(
-          `[claude-code:startAdvanced] reqId=${reqId} exited with code ${code} signal=${signal}`,
-        );
-        if (stderrBuf)
-          console.error(
-            `[claude-code:startAdvanced] stderr: ${stderrBuf.slice(0, 2000)}`,
-          );
-      }
-      // Build a helpful error message for signal-killed processes
-      let errorMsg = code !== 0 && stderrBuf ? stderrBuf.slice(0, 2000) : null;
-      if (signal === "SIGTERM" || code === 143) {
-        errorMsg =
-          "Claude process was terminated (SIGTERM). This may happen if the task exceeded the timeout or the system killed the process. Try again or increase the timeout.";
-      }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(
-          "claude-code:done",
-          reqId,
-          code ?? -1,
-          errorMsg,
-        );
-      }
+      },
+      onStderr: (id, data) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("claude-code:stderr", id, data);
+        }
+      },
+      onDone: (id, code, error, result) => {
+        syncCaffeinate();
+        // Emit a synthetic result event as a fallback if the generator
+        // ended before streaming the result message.
+        if (result && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("claude-code:event", id, {
+            type: "result",
+            subtype: code === 0 ? "success" : "error_during_execution",
+            result: result.text || "",
+            session_id: result.sessionId,
+            total_cost_usd: result.cost,
+            usage: result.usage,
+            is_error: code !== 0,
+            errors: error ? [error] : [],
+          });
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("claude-code:done", id, code, error);
+        }
+      },
     });
 
     return reqId;
   });
 
-  // Send input to a running advanced Claude Code session.
-  // NOTE: In -p mode stdin is closed immediately after the initial prompt
-  // (required for Claude to start processing). As a result, proc.stdin.writable
-  // will be false by the time this handler is called and writes will silently
-  // fail. Interactive permission responses are therefore not supported in -p
-  // mode; permission handling must be configured upfront via --permission-mode
-  // or the project's .claude/settings.json rules.
-  ipcMain.handle("claude-code:sendInput", (_event, reqId, text) => {
-    const proc = claudeProcs.get(reqId);
-    if (proc && !proc.killed && proc.stdin && proc.stdin.writable) {
-      proc.stdin.write(text);
-      return true;
-    }
+  // Send input to a running Claude Code session.
+  // NOTE: The SDK handles permissions via permissionMode and allowedTools
+  // configuration, not via stdin. This handler is kept for API compatibility
+  // but is effectively a no-op with the SDK.
+  ipcMain.handle("claude-code:sendInput", (_event, _reqId, _text) => {
     return false;
   });
 
@@ -1036,14 +697,13 @@ function setupShellIPC() {
   ipcMain.handle("claude-code:writeAgentFile", (_event, filePath, content) => {
     try {
       // Validate: only allow writing to .claude/agents/ directories
-      // Use path.resolve to canonicalize, then verify the resolved path
-      // is inside a .claude/agents/ directory under the workspace
+      // Allow both project-scope and user-scope (~/.claude/agents/)
       const resolved = path.resolve(filePath);
-      const agentsDir = path.join(workspaceDir, ".claude", "agents");
-      if (
-        !resolved.startsWith(agentsDir + path.sep) &&
-        resolved !== agentsDir
-      ) {
+      const projectAgentsDir = path.join(workspaceDir, ".claude", "agents");
+      const userAgentsDir = path.join(require("os").homedir(), ".claude", "agents");
+      const inProject = resolved.startsWith(projectAgentsDir + path.sep) || resolved === projectAgentsDir;
+      const inUser = resolved.startsWith(userAgentsDir + path.sep) || resolved === userAgentsDir;
+      if (!inProject && !inUser) {
         return {
           ok: false,
           error: "Can only write to .claude/agents/ directories",
@@ -1064,11 +724,11 @@ function setupShellIPC() {
   ipcMain.handle("claude-code:deleteAgentFile", (_event, filePath) => {
     try {
       const resolved = path.resolve(filePath);
-      const agentsDir = path.join(workspaceDir, ".claude", "agents");
-      if (
-        !resolved.startsWith(agentsDir + path.sep) &&
-        resolved !== agentsDir
-      ) {
+      const projectAgentsDir = path.join(workspaceDir, ".claude", "agents");
+      const userAgentsDir = path.join(require("os").homedir(), ".claude", "agents");
+      const inProject = resolved.startsWith(projectAgentsDir + path.sep) || resolved === projectAgentsDir;
+      const inUser = resolved.startsWith(userAgentsDir + path.sep) || resolved === userAgentsDir;
+      if (!inProject && !inUser) {
         return {
           ok: false,
           error: "Can only delete from .claude/agents/ directories",
@@ -1174,10 +834,7 @@ app.on("before-quit", () => {
     if (entry.proc && !entry.proc.killed) entry.proc.kill();
   }
   shells.clear();
-  for (const [, proc] of claudeProcs) {
-    if (proc && !proc.killed) proc.kill();
-  }
-  claudeProcs.clear();
+  sdkBridge.abortAll();
   caffeineStop();
 });
 

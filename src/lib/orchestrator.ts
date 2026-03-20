@@ -14,6 +14,7 @@ export interface TaskAssignment {
   agentId: string;
   agentName: string;
   task: string;
+  subtasks: string[]; // concrete action items that break down the task
   group?: number; // tasks in same group run in parallel; groups execute sequentially (1, then 2, etc.)
 }
 
@@ -53,7 +54,7 @@ RESPOND in this exact JSON format and nothing else:
     { "name": "UniqueFirstName", "role": "Job Title", "personality": "Detailed system prompt for this specialist" }
   ],
   "assignments": [
-    { "agentName": "ExactEmployeeName", "task": "Specific task description for this employee", "group": 1 }
+    { "agentName": "ExactEmployeeName", "task": "Specific task description for this employee", "subtasks": ["First concrete step", "Second concrete step"], "group": 1 }
   ]
 }
 
@@ -64,6 +65,7 @@ Rules:
 - You may assign tasks to both existing AND newly created employees
 - Use EXACT employee names (existing or newly created) in assignments
 - Each assignment should be a clear, actionable task
+- Each assignment MUST include a "subtasks" array: 2-5 short, concrete action items that break down the task
 - You may assign multiple tasks to one employee or spread across employees
 - All employees share the same project working directory — coordinate their work so they don't overwrite each other
 - The workingDirectory should be reused if an existing directory is relevant, or a new short slug if not
@@ -255,7 +257,7 @@ export async function routeTasks(
       );
 
       const assignments: TaskAssignment[] = (parsed.assignments || []).map(
-        (a: { agentName: string; task: string; group?: number }) => {
+        (a: { agentName: string; task: string; subtasks?: string[]; group?: number }) => {
           const agent = agents.find(
             (ag) => ag.name.toLowerCase() === a.agentName.toLowerCase()
           );
@@ -263,6 +265,9 @@ export async function routeTasks(
             agentId: agent?.id ?? '', // empty string means it's a new agent — resolved after creation
             agentName: a.agentName,
             task: a.task,
+            subtasks: Array.isArray(a.subtasks) && a.subtasks.length > 0
+              ? a.subtasks.map(String)
+              : [a.task], // fallback: use the whole task as a single subtask
             group: typeof a.group === 'number' ? a.group : 1,
           };
         }
@@ -287,7 +292,7 @@ export async function routeTasks(
   return {
     plan: 'Could not parse routing — assigning to first available employee.',
     assignments: agents.length > 0
-      ? [{ agentId: agents[0].id, agentName: agents[0].name, task: instruction }]
+      ? [{ agentId: agents[0].id, agentName: agents[0].name, task: instruction, subtasks: [instruction] }]
       : [],
     newAgents: [],
     workingDirectory: fallbackDir,
@@ -400,13 +405,19 @@ export async function executeTask(
 
   const userMsg: Message = {
     role: 'user',
-    content: `[OFFICE TASK] ${task}\n\nPlease complete this task. If you need to write code, include it in code blocks. Explain what you did briefly.${workingDirectory ? ` Remember: all files go under ${workingDirectory}/.` : ''}`,
+    content: `[OFFICE TASK] ${task}\n\nComplete each step in order. If you need to write code, include it in code blocks. Explain what you did briefly.${workingDirectory ? ` Remember: all files go under ${workingDirectory}/.` : ''}`,
     timestamp: Date.now(),
   };
 
+  // When resuming a Claude Code session, the session already holds the full
+  // conversation history.  Passing the local history array again just doubles
+  // the input tokens.  Keep only the new user message on the JS side — the
+  // ai layer will detect the sessionId and send only the latest prompt.
+  const trimmedHistory = agent.sessionId ? [] : agent.history;
+
   const updatedAgent: Agent = {
     ...agent,
-    history: [...agent.history, userMsg],
+    history: [...trimmedHistory, userMsg],
     status: 'working',
     currentThought: 'Working on task...',
   };
@@ -429,7 +440,11 @@ export async function executeTask(
   return {
     agent: {
       ...updatedAgent,
-      history: [...updatedAgent.history, assistantMsg],
+      // Only keep the latest exchange in local history — the full
+      // conversation lives in the Claude Code session.
+      history: agent.sessionId
+        ? [userMsg, assistantMsg]
+        : [...updatedAgent.history, assistantMsg],
       status: 'idle',
       currentThought: result.text.slice(0, 80) + (result.text.length > 80 ? '...' : ''),
     },
@@ -555,7 +570,6 @@ ${hasTeam ? `- Delegate ALL work. NEVER write code, edit files, or run commands 
     // Only send systemPrompt on new sessions — Claude Code already has it
     // when resuming. Re-sending via appendSystemPrompt wastes input tokens.
     ...(sessionId ? {} : { systemPrompt }),
-    outputFormat: 'stream-json',
     agents: Object.keys(agentDefs).length > 0 ? agentDefs : undefined,
     enableAgentTeams: !!enableAgentTeams,
     // 'acceptEdits' auto-approves file-write operations without prompting.

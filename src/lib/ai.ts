@@ -198,7 +198,6 @@ async function callClaudeCodeAdvanced(
     // Skip system prompt on resumed sessions — Claude Code already has it
     // from the initial session. Re-sending it wastes input tokens.
     ...(isResume ? {} : { systemPrompt: system }),
-    outputFormat: 'stream-json',
     model: subDef?.model || undefined,
     allowedTools: subDef?.tools,
     disallowedTools: subDef?.disallowedTools,

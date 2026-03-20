@@ -1,6 +1,6 @@
 {
   "name": "outworked",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "AI agent orchestration tool",
   "author": "Outworked Team",
   "private": true,
@@ -13,7 +13,9 @@
     "electron:dev": "vite build && electron .",
     "electron:build": "vite build && electron-builder --config electron-builder.yml"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.80"
+  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
     "@types/node": "^20",

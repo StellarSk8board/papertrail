@@ -954,8 +954,6 @@ export default function ClaudeCodePanel({ workspace }: { workspace: string }) {
     const options: ClaudeCodeAdvancedOptions = {
       prompt: text,
       cwd: workspace,
-      outputFormat: 'stream-json',
-      verbose: true,
       ...extraOpts,
     };
 

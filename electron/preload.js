@@ -75,6 +75,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("claude-code:chunk", listener);
       return () => ipcRenderer.removeListener("claude-code:chunk", listener);
     },
+    onEvent: (cb) => {
+      const listener = (_event, reqId, data) => cb(reqId, data);
+      ipcRenderer.on("claude-code:event", listener);
+      return () => ipcRenderer.removeListener("claude-code:event", listener);
+    },
     onStderr: (cb) => {
       const listener = (_event, reqId, data) => cb(reqId, data);
       ipcRenderer.on("claude-code:stderr", listener);

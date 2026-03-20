@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Agent, /* ApiKeys, */ MODELS, SPRITE_KEYS, AGENT_COLORS, SubagentDef, AgentScope } from '../lib/types';
+import { Agent, MODELS, SPRITE_KEYS, AGENT_COLORS, SubagentDef, AgentScope } from '../lib/types';
 import { writeClaudeAgentFile, deleteClaudeAgentFile, getHomedir } from '../lib/terminal';
 import { buildSubagentMd, generateAgentWithAI, parseSubagentFrontmatter } from '../lib/storage';
 
@@ -10,14 +10,6 @@ interface AgentEditorProps {
   onDelete: (agentId: string) => void;
   onClose: () => void;
 }
-
-// API keys disabled — only Claude Code is available
-// const PROVIDER_KEY_MAP: Record<string, keyof ApiKeys | null> = {
-//   openai: 'openai',
-//   anthropic: 'anthropic',
-//   google: 'gemini',
-//   'claude-code': null,
-// };
 
 export default function AgentEditor({ agent, workspaceDir, onSave, onDelete, onClose }: AgentEditorProps) {
   const [draft, setDraft] = useState<Agent>({ ...agent });
@@ -89,17 +81,6 @@ export default function AgentEditor({ agent, workspaceDir, onSave, onDelete, onC
               />
             </Field>
 
-            <Field label="Model">
-              <select
-                value={draft.model}
-                onChange={(e) => update('model', e.target.value as Agent['model'])}
-                className="input-mono"
-              >
-                {availableModels.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label} ({m.provider})</option>
-                ))}
-              </select>
-            </Field>
 
             <Field label="Personality (System Prompt)">
               <textarea
@@ -130,12 +111,13 @@ export default function AgentEditor({ agent, workspaceDir, onSave, onDelete, onC
           <SubagentTab
             agent={draft}
             onUpdate={(updated) => setDraft(prev => ({ ...prev, ...updated }))}
-            onSaveToFile={async () => {
-              if (!draft.subagentFile || !draft.subagentDef) return;
+            onSaveToFile={async (defOverride?: SubagentDef) => {
+              const defToSave = defOverride || draft.subagentDef;
+              if (!draft.subagentFile || !defToSave) return;
               setSaving(true);
               try {
                 const slug = draft.subagentFile.split('/').pop()?.replace(/\.md$/, '') || draft.name;
-                const content = buildSubagentMd(slug, draft.subagentDef, draft.personality, draft.name, draft.role);
+                const content = buildSubagentMd(slug, defToSave, draft.personality, draft.name, draft.role);
 
                 // Determine the correct target path based on current scope
                 const scope = draft.agentScope || 'user';
@@ -222,7 +204,23 @@ export default function AgentEditor({ agent, workspaceDir, onSave, onDelete, onC
       {/* Footer */}
       <div className="px-4 py-3 border-t border-slate-600 flex gap-2">
         <button
-          onClick={() => onSave(draft)}
+          onClick={async () => {
+            // Save in-memory state
+            onSave(draft);
+            // Also persist subagent settings to the .md file if applicable
+            if (draft.subagentFile && draft.subagentDef) {
+              const slug = draft.subagentFile.split('/').pop()?.replace(/\.md$/, '') || draft.name;
+              const content = buildSubagentMd(slug, draft.subagentDef, draft.personality, draft.name, draft.role);
+              const scope = draft.agentScope || 'user';
+              const targetPath = scope === 'project' && workspaceDir
+                ? `${workspaceDir}/.claude/agents/${slug}.md`
+                : `${getHomedir()}/.claude/agents/${slug}.md`;
+              await writeClaudeAgentFile(targetPath, content);
+              if (targetPath !== draft.subagentFile) {
+                await deleteClaudeAgentFile(draft.subagentFile);
+              }
+            }
+          }}
           className="btn-pixel bg-indigo-600 hover:bg-indigo-500 flex-1"
         >
           Save
@@ -265,7 +263,7 @@ function SubagentTab({
 }: {
   agent: Agent;
   onUpdate: (partial: Partial<Agent>) => void;
-  onSaveToFile: () => void;
+  onSaveToFile: (defOverride?: SubagentDef) => void;
   onGenerate: (description: string) => void;
   onRequestGenerate: () => void;
   generatePrompt: string | null;
@@ -355,7 +353,12 @@ function SubagentTab({
       <Field label="Model Override">
         <select
           value={def.model || 'inherit'}
-          onChange={(e) => updateDef({ model: e.target.value === 'inherit' ? undefined : e.target.value })}
+          onChange={(e) => {
+            const newModel = e.target.value === 'inherit' ? undefined : e.target.value;
+            updateDef({ model: newModel });
+            // Auto-save model change to the .md file (pass updated def to avoid stale state)
+            onSaveToFile({ ...def, model: newModel });
+          }}
           className="input-mono"
         >
           <option value="inherit">inherit (parent model)</option>
@@ -517,7 +520,7 @@ function SubagentTab({
 
       <div className="flex gap-2">
         <button
-          onClick={onSaveToFile}
+          onClick={() => onSaveToFile()}
           disabled={saving || generating}
           className="flex-1 btn-pixel bg-purple-700 hover:bg-purple-600 text-[10px] disabled:opacity-50"
         >

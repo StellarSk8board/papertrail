@@ -26,6 +26,7 @@ interface ClaudeCodeAPI {
   abort: (reqId: number) => Promise<boolean>;
   sendInput: (reqId: number, text: string) => Promise<boolean>;
   onChunk: (cb: (reqId: number, data: string) => void) => () => void;
+  onEvent: (cb: (reqId: number, event: ClaudeCodeEvent) => void) => () => void;
   onStderr: (cb: (reqId: number, data: string) => void) => () => void;
   onDone: (cb: (reqId: number, code: number, error: string | null) => void) => () => void;
   version: () => Promise<string | null>;
@@ -51,12 +52,10 @@ export interface ClaudeCodeAdvancedOptions {
   continueSession?: boolean;
   resumeSessionId?: string;
   agents?: Record<string, SubagentDef>;
-  outputFormat?: 'text' | 'json' | 'stream-json';
-  verbose?: boolean;
   permissionMode?: 'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions' | 'plan';
   dangerouslySkipPermissions?: boolean;
-  mcpServers?: SubagentDef['mcpServers']; // MCP servers to make available to this session
-  tools?: string; // restrict built-in tools e.g. "Bash,Edit,Read"
+  mcpServers?: SubagentDef['mcpServers'];
+  tools?: string;
   enableAgentTeams?: boolean;
   teammateMode?: 'auto' | 'in-process' | 'tmux';
   timeoutMs?: number;
@@ -69,53 +68,46 @@ export interface AgentFileInfo {
   scope: 'user' | 'project';
 }
 
-// Parsed stream-json event from Claude Code
+// SDK message event from Claude Code (via @anthropic-ai/claude-agent-sdk).
+// This is a union-friendly interface — each message has a `type` discriminator.
+// See SDK docs for the full SDKMessage union type.
 export interface ClaudeCodeEvent {
   type: string;
   subtype?: string;
-  // For stream_event
-  event?: {
-    type?: string;
-    delta?: {
-      type?: string;
-      text?: string;
-    };
-    content_block?: {
-      type?: string;
-      name?: string;
-      id?: string;
-      text?: string;
-    };
-    message?: {
-      id?: string;
-      model?: string;
-      usage?: { input_tokens?: number; output_tokens?: number };
-    };
-  };
-  // For tool_use / tool_result events
-  tool_use?: {
-    name?: string;
-    input?: Record<string, unknown>;
-  };
-  tool_result?: {
-    content?: string;
-    is_error?: boolean;
-  };
-  // For assistant / result messages
-  message?: {
-    role?: string;
-    content?: string | Array<{ type: string; text?: string; name?: string; input?: unknown }>;
-  };
-  // For session metadata
+  uuid?: string;
   session_id?: string;
+  parent_tool_use_id?: string | null;
+  // For assistant messages (type: "assistant")
+  message?: {
+    id?: string;
+    role?: string;
+    model?: string;
+    content?: string | Array<{ type: string; text?: string; name?: string; input?: unknown; id?: string }>;
+    stop_reason?: string | null;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  // For result messages (type: "result")
   result?: string;
   is_error?: boolean;
   errors?: string[];
   duration_ms?: number;
   total_cost_usd?: number;
+  num_turns?: number;
+  stop_reason?: string | null;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+  };
+  // For system messages (type: "system", subtype: "init")
+  tools?: string[];
+  model?: string;
+  permissionMode?: string;
+  // For stream_event (partial messages)
+  event?: {
+    type?: string;
+    delta?: { type?: string; text?: string };
+    content_block?: { type?: string; name?: string; id?: string; text?: string };
+    message?: { id?: string; model?: string; usage?: { input_tokens?: number; output_tokens?: number } };
   };
 }
 
@@ -242,7 +234,7 @@ export async function execCommand(
   return api.exec(command, cwd, timeoutMs);
 }
 
-// ─── Claude Code CLI execution (streaming) ────────────────────────
+// ─── Claude Code execution (streaming via SDK) ────────────────────
 
 export async function runClaudeCode(
   prompt: string,
@@ -251,59 +243,16 @@ export async function runClaudeCode(
   onData?: (chunk: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const api = getAPI();
-  if (!api?.claudeCode) {
-    throw new Error('Claude Code requires the Electron app. Make sure `claude` CLI is installed.');
-  }
-
-  const reqId = await api.claudeCode.start(prompt, systemPrompt, cwd, 300_000);
-
-  // Abort support
-  if (signal) {
-    const onAbort = () => api.claudeCode!.abort(reqId);
-    signal.addEventListener('abort', onAbort, { once: true });
-  }
-
-  return new Promise<string>((resolve, reject) => {
-    let fullOutput = '';
-    let stderrOutput = '';
-
-    const removeChunk = api.claudeCode!.onChunk((id, chunk) => {
-      if (id !== reqId) return;
-      fullOutput += chunk;
-      onData?.(chunk);
-    });
-
-    const removeStderr = api.claudeCode!.onStderr((id, data) => {
-      if (id !== reqId) return;
-      stderrOutput += data;
-      console.warn('[Claude Code stderr]', data);
-    });
-
-    const removeDone = api.claudeCode!.onDone((id, code, error) => {
-      if (id !== reqId) return;
-      cleanup();
-      if (error) {
-        reject(new Error(`Claude Code error: ${error}${stderrOutput ? `\nstderr: ${stderrOutput.trim()}` : ''}`));
-      } else if (code !== 0) {
-        const detail = stderrOutput.trim() || fullOutput || '';
-        reject(new Error(detail ? `Claude Code exited with code ${code}: ${detail}` : `Claude Code exited with code ${code}. Is the \`claude\` CLI installed?`));
-      } else {
-        resolve(fullOutput);
-      }
-    });
-
-    function cleanup() {
-      removeChunk();
-      removeStderr();
-      removeDone();
-    }
-  });
+  const result = await runClaudeCodeAdvanced(
+    { prompt, systemPrompt, cwd },
+    { onTextDelta: onData },
+    signal,
+  );
+  return result.result;
 }
 
-// ─── Advanced Claude Code CLI execution ───────────────────────────
-// Uses stream-json output format for full event visibility including
-// tool calls, subagent activity, and session metadata.
+// ─── Advanced Claude Code execution ───────────────────────────────
+// Receives typed SDK messages via the claude-code:event IPC channel.
 
 export interface PermissionRequest {
   reqId: number;
@@ -349,94 +298,53 @@ export async function runClaudeCodeAdvanced(
     let sessionId: string | undefined;
     let cost: number | undefined;
     let usage: { input_tokens: number; output_tokens: number } | undefined;
-    let buffer = ''; // For parsing newline-delimited JSON
 
-    const removeChunk = api.claudeCode!.onChunk((id, chunk) => {
+    // Receive typed SDK messages directly — no NDJSON parsing needed
+    const removeEvent = api.claudeCode!.onEvent((id, event: ClaudeCodeEvent) => {
       if (id !== reqId) return;
+      callbacks.onEvent?.(event);
 
-      if (options.outputFormat === 'stream-json' || !options.outputFormat) {
-        // Parse newline-delimited JSON events
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const event: ClaudeCodeEvent = JSON.parse(trimmed);
-            callbacks.onEvent?.(event);
-
-            // Extract text from assistant messages.
-            // Assistant events contain the FULL content so far (not a delta),
-            // so we replace fullText rather than appending to avoid duplication.
-            if (event.type === 'assistant' && event.message?.content) {
-              const content = event.message.content;
-              let newText = '';
-              if (typeof content === 'string') {
-                newText = content;
-              } else if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (block.type === 'text' && block.text) {
-                    newText += block.text;
-                  } else if (block.type === 'tool_use' && block.name) {
-                    callbacks.onToolUse?.(block.name, (block.input as Record<string, unknown>) || {});
-                  }
-                }
-              }
-              // Only emit a delta for the new portion of text
-              if (newText.length > fullText.length) {
-                const delta = newText.slice(fullText.length);
-                fullText = newText;
-                callbacks.onTextDelta?.(delta);
-              } else if (newText && newText !== fullText) {
-                // Content was replaced (e.g. new turn) — emit the full new text
-                fullText = newText;
-                callbacks.onTextDelta?.(newText);
-              }
+      // Extract text from assistant messages
+      if (event.type === 'assistant' && event.message?.content) {
+        const content = event.message.content;
+        let newText = '';
+        if (typeof content === 'string') {
+          newText = content;
+        } else if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'text' && block.text) {
+              newText += block.text;
+            } else if (block.type === 'tool_use' && block.name) {
+              callbacks.onToolUse?.(block.name, (block.input as Record<string, unknown>) || {});
             }
-
-            // Handle result message (final)
-            if (event.type === 'result') {
-              if (event.result) fullText = event.result;
-              if (event.is_error && event.errors?.length) {
-                resultErrors = event.errors;
-              }
-              sessionId = event.session_id;
-              // Support both old (total_cost_usd) and new (cost_usd) field names
-              const ev = event as unknown as Record<string, unknown>;
-              cost = (ev.total_cost_usd ?? ev.cost_usd ?? ev.costUsd) as number | undefined;
-              if (event.usage) {
-                usage = {
-                  input_tokens: event.usage.input_tokens || 0,
-                  output_tokens: event.usage.output_tokens || 0,
-                };
-              }
-
-            // Handle permission request — Claude Code is asking the user to approve a tool
-            } else if (event.type === 'permission_request') {
-              const toolName = (event as unknown as Record<string, unknown>).tool_name as string
-                || ((event as unknown as Record<string, unknown>).tool as Record<string, unknown>)?.name as string
-                || 'unknown';
-              const desc = (event as unknown as Record<string, unknown>).description as string
-                || (event as unknown as Record<string, unknown>).message as string
-                || `Claude wants to use ${toolName}`;
-              callbacks.onPermissionRequest?.({
-                reqId,
-                tool: toolName,
-                description: desc,
-              });
-            }
-          } catch {
-            // Not valid JSON — might be plain text mixed in
-            fullText += trimmed;
-            callbacks.onTextDelta?.(trimmed);
           }
         }
-      } else {
-        // Plain text mode
-        fullText += chunk;
-        callbacks.onTextDelta?.(chunk);
+        // Only emit a delta for the new portion of text
+        if (newText.length > fullText.length) {
+          const delta = newText.slice(fullText.length);
+          fullText = newText;
+          callbacks.onTextDelta?.(delta);
+        } else if (newText && newText !== fullText) {
+          // Content was replaced (e.g. new turn)
+          fullText = newText;
+          callbacks.onTextDelta?.(newText);
+        }
+      }
+
+      // Handle result message (final)
+      if (event.type === 'result') {
+        if (event.result) fullText = event.result;
+        if (event.is_error && event.errors?.length) {
+          resultErrors = event.errors;
+        }
+        sessionId = event.session_id;
+        cost = event.total_cost_usd;
+        if (event.usage) {
+          usage = {
+            input_tokens: event.usage.input_tokens || 0,
+            output_tokens: event.usage.output_tokens || 0,
+          };
+        }
       }
     });
 
@@ -450,29 +358,6 @@ export async function runClaudeCodeAdvanced(
       if (id !== reqId) return;
       cleanup();
 
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event: ClaudeCodeEvent = JSON.parse(buffer.trim());
-          callbacks.onEvent?.(event);
-          if (event.type === 'result') {
-            if (event.result) fullText = event.result;
-            if (event.is_error && event.errors?.length) resultErrors = event.errors;
-            sessionId = event.session_id;
-            const ev = event as unknown as Record<string, unknown>;
-            cost = (ev.total_cost_usd ?? ev.cost_usd ?? ev.costUsd) as number | undefined;
-            if (event.usage) {
-              usage = {
-                input_tokens: event.usage.input_tokens || 0,
-                output_tokens: event.usage.output_tokens || 0,
-              };
-            }
-          }
-        } catch {
-          fullText += buffer;
-        }
-      }
-
       if (error) {
         reject(new Error(`Claude Code error: ${error}${stderrText ? `\nstderr: ${stderrText.trim()}` : ''}`));
       } else if (code !== 0) {
@@ -484,7 +369,7 @@ export async function runClaudeCodeAdvanced(
     });
 
     function cleanup() {
-      removeChunk();
+      removeEvent();
       removeStderr();
       removeDone();
     }
