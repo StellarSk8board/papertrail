@@ -9,6 +9,10 @@ files:
   - build/icon.png
   - build/icon.icns
 npmRebuild: false
+publish:
+  provider: github
+  owner: outworked
+  repo: outworked
 mac:
   icon: build/icon.icns
   category: public.app-category.developer-tools

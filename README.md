@@ -121,7 +121,7 @@ On first launch, the onboarding modal walks you through picking a workspace and 
 ```bash
 git clone https://github.com/outworked/outworked.git
 cd outworked
-npm install         # Requires Node.js v18+
+npm install
 npm run electron:dev
 ```
 

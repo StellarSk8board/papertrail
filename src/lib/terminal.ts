@@ -215,6 +215,21 @@ interface ElectronAPI {
     ) => () => void;
     onFileTreeChanged: (cb: () => void) => () => void;
   };
+  updater?: {
+    check: () => Promise<unknown>;
+    download: () => Promise<unknown>;
+    install: () => Promise<void>;
+    getVersion: () => Promise<string>;
+    onUpdateAvailable: (
+      cb: (info: { version: string; releaseNotes?: string }) => void,
+    ) => () => void;
+    onUpdateNotAvailable: (cb: () => void) => () => void;
+    onDownloadProgress: (
+      cb: (progress: { percent: number; transferred: number; total: number }) => void,
+    ) => () => void;
+    onUpdateDownloaded: (cb: (info: { version: string }) => void) => () => void;
+    onError: (cb: (message: string) => void) => () => void;
+  };
   git?: {
     isRepo: (cwd?: string) => Promise<{ ok: boolean; isRepo: boolean }>;
     status: (cwd?: string) => Promise<GitStatusResult>;

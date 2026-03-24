@@ -44,6 +44,7 @@ import AgentTasks from "./components/AgentTasks";
 import SkillsPanel from "./components/SkillsPanel";
 import MusicPlayer from "./components/MusicPlayer";
 import ClaudeCodeStatus from "./components/ClaudeCodeStatus";
+import UpdateBanner from "./components/UpdateBanner";
 import WorkspacePicker from "./components/WorkspacePicker";
 import PermissionsPanel, {
   PermissionsBanner,
@@ -731,6 +732,8 @@ export default function App() {
             AI Agent HQ
           </p>
         </div>
+        {/* Update banner */}
+        <UpdateBanner />
         {/* Claude Code status + sync */}
         <ClaudeCodeStatus />
         {/* Working directory display */}

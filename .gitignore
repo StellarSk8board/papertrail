@@ -37,7 +37,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-outworked.md
-newFeatures.md
-
 .claude
+.dev
+dev-app-update.yml

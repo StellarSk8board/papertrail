@@ -199,4 +199,41 @@ contextBridge.exposeInMainWorld("electronAPI", {
     show: (title, body, options) =>
       ipcRenderer.invoke("notification:show", title, body, options),
   },
+
+  // Auto-updater
+  updater: {
+    check: () => ipcRenderer.invoke("updater:check"),
+    download: () => ipcRenderer.invoke("updater:download"),
+    install: () => ipcRenderer.invoke("updater:install"),
+    getVersion: () => ipcRenderer.invoke("updater:getVersion"),
+    onUpdateAvailable: (cb) => {
+      const listener = (_event, info) => cb(info);
+      ipcRenderer.on("updater:update-available", listener);
+      return () =>
+        ipcRenderer.removeListener("updater:update-available", listener);
+    },
+    onUpdateNotAvailable: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on("updater:update-not-available", listener);
+      return () =>
+        ipcRenderer.removeListener("updater:update-not-available", listener);
+    },
+    onDownloadProgress: (cb) => {
+      const listener = (_event, progress) => cb(progress);
+      ipcRenderer.on("updater:download-progress", listener);
+      return () =>
+        ipcRenderer.removeListener("updater:download-progress", listener);
+    },
+    onUpdateDownloaded: (cb) => {
+      const listener = (_event, info) => cb(info);
+      ipcRenderer.on("updater:update-downloaded", listener);
+      return () =>
+        ipcRenderer.removeListener("updater:update-downloaded", listener);
+    },
+    onError: (cb) => {
+      const listener = (_event, message) => cb(message);
+      ipcRenderer.on("updater:error", listener);
+      return () => ipcRenderer.removeListener("updater:error", listener);
+    },
+  },
 });

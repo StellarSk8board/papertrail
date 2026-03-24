@@ -13,6 +13,7 @@ const path = require("path");
 const fs = require("fs");
 const { spawn, execSync, execFileSync } = require("child_process");
 const crypto = require("crypto");
+const { autoUpdater } = require("electron-updater");
 const sdkBridge = require("./sdk-bridge");
 
 // Set the app name early so macOS notifications show "Outworked" instead of "Electron"
@@ -2078,6 +2079,63 @@ function setupSessionIPC() {
   });
 }
 
+// ─── Auto-updater ───────────────────────────────────────────────
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  // autoUpdater.forceDevUpdateConfig = !app.isPackaged;
+
+  autoUpdater.on("update-available", (info) => {
+    if (mainWindow) {
+      mainWindow.webContents.send("updater:update-available", {
+        version: info.version,
+        releaseNotes: info.releaseNotes,
+      });
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    if (mainWindow) {
+      mainWindow.webContents.send("updater:update-not-available");
+    }
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    if (mainWindow) {
+      mainWindow.webContents.send("updater:download-progress", {
+        percent: progress.percent,
+        transferred: progress.transferred,
+        total: progress.total,
+      });
+    }
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    if (mainWindow) {
+      mainWindow.webContents.send("updater:update-downloaded", {
+        version: info.version,
+      });
+    }
+  });
+
+  autoUpdater.on("error", (err) => {
+    if (mainWindow) {
+      mainWindow.webContents.send("updater:error", err.message);
+    }
+  });
+
+  // IPC handlers
+  ipcMain.handle("updater:check", () => autoUpdater.checkForUpdates());
+  ipcMain.handle("updater:download", () => autoUpdater.downloadUpdate());
+  ipcMain.handle("updater:install", () => autoUpdater.quitAndInstall());
+  ipcMain.handle("updater:getVersion", () => app.getVersion());
+
+  // Check for updates 3 seconds after launch
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 3000);
+}
+
 function createWindow() {
   // Allow renderer to reach the AI provider APIs
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -2209,6 +2267,7 @@ app.whenReady().then(() => {
   setupMusicIPC();
   setupSessionIPC();
   setupNotificationIPC();
+  setupAutoUpdater();
   createWindow();
 
   // On startup, ensure the default workspace is accessible
