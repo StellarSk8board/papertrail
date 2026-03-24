@@ -195,7 +195,7 @@ Outworked takes a defense-in-depth approach:
 
 ## The Soundtrack
 
-Every office needs a vibe. Outworked ships with an original 8-bit soundtrack featuring tracks like:
+Every office needs a vibe. Outworked ships with an original soundtrack featuring tracks like:
 
 > _"Don't Ever Turn Me Off"_ · _"She's Just a Coder Agent"_ · _"LLM Love Lying Machine"_ · _"Can Love Be Binary"_ · _"Goodbye Humans"_ · _"How Does Grass Feel"_ · _"Are You Even Reading This"_
 
