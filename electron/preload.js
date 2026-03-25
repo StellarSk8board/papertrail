@@ -185,6 +185,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
         cumulativeOutputTokens,
       ),
 
+    // Scheduler
+    schedulerCreate: (task) => ipcRenderer.invoke("db:scheduler:create", task),
+    schedulerList: () => ipcRenderer.invoke("db:scheduler:list"),
+    schedulerGet: (id) => ipcRenderer.invoke("db:scheduler:get", id),
+    schedulerUpdate: (id, updates) =>
+      ipcRenderer.invoke("db:scheduler:update", id, updates),
+    schedulerDelete: (id) => ipcRenderer.invoke("db:scheduler:delete", id),
+    schedulerGetHistory: (taskId, limit) =>
+      ipcRenderer.invoke("db:scheduler:getHistory", taskId, limit),
+
     // Triggers
     triggerCreate: (trigger) =>
       ipcRenderer.invoke("db:trigger:create", trigger),
@@ -205,6 +215,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("db:channel:messageSave", msg),
     channelMessageList: (channelId, limit) =>
       ipcRenderer.invoke("db:channel:messageList", channelId, limit),
+
+    // Scheduler events
+    onSchedulerFire: (cb) => {
+      const listener = (_event, task) => cb(task);
+      ipcRenderer.on("scheduler:fire", listener);
+      return () => ipcRenderer.removeListener("scheduler:fire", listener);
+    },
 
     // Channel manager (lifecycle + messaging)
     channelRegister: (config) => ipcRenderer.invoke("channel:register", config),

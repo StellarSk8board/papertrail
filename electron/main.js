@@ -2380,6 +2380,20 @@ app.whenReady().then(() => {
   }
 
   try {
+    const { scheduler } = require("./scheduler");
+    scheduler.start(mainWindow);
+
+    // IPC handler for completing a scheduler run from the renderer
+    ipcMain.handle(
+      "scheduler:completeRun",
+      (_event, logId, status, result, error) =>
+        scheduler.completeRun(logId, status, result, error),
+    );
+  } catch (err) {
+    console.error("[scheduler] Failed to initialize:", err.message);
+  }
+
+  try {
     const { triggerEngine, WebhookServer } = require("./triggers");
     triggerEngine.setWindow(mainWindow);
     triggerEngine.refreshPatterns();

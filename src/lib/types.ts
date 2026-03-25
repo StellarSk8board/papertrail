@@ -75,7 +75,8 @@ export type AgentStatus =
   | "slow"
   | "stuck"
   | "background"
-  | "channel-message";
+  | "channel-message"
+  | "scheduled-task";
 
 export interface BackgroundTask {
   id: string;
@@ -184,6 +185,36 @@ export interface ChannelConfig {
   status: "connected" | "disconnected" | "error";
   createdAt: number;
   updatedAt: number;
+}
+
+// ─── Scheduled Tasks ────────────────────────────────────────────
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  type: "one-time" | "interval" | "cron";
+  schedule: string; // ISO timestamp, ms interval, or cron expression
+  agentId: string;
+  prompt: string;
+  enabled: boolean;
+  lastRunAt?: number;
+  nextRunAt: number;
+  runCount: number;
+  maxRuns?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TaskRunLog {
+  id: number;
+  taskId: string;
+  agentId: string;
+  startedAt: number;
+  completedAt?: number;
+  durationMs?: number;
+  status: "running" | "completed" | "error";
+  result?: string;
+  error?: string;
 }
 
 // ─── Triggers ───────────────────────────────────────────────────
