@@ -385,6 +385,7 @@ function AddImessageForm({
   onError: (err: string) => void;
 }) {
   const [name, setName] = useState("iMessage");
+  const [allowedSenders, setAllowedSenders] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
@@ -398,7 +399,16 @@ function AddImessageForm({
     setSaving(true);
     try {
       const id = `imessage-${Date.now()}`;
-      const config = { id, type: "imessage", name: name.trim(), config: {} };
+      const senders = allowedSenders
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const config = {
+        id,
+        type: "imessage",
+        name: name.trim(),
+        config: senders.length > 0 ? { allowedSenders: senders } : {},
+      };
       await db.channelRegister(config);
       onAdded();
     } catch (err: unknown) {
@@ -423,6 +433,19 @@ function AddImessageForm({
           onChange={(e) => setName(e.target.value)}
           placeholder="iMessage"
         />
+      </label>
+
+      <label className="text-[10px] text-slate-400 font-pixel">
+        Allowed Senders
+        <input
+          className="input-mono w-full mt-1"
+          value={allowedSenders}
+          onChange={(e) => setAllowedSenders(e.target.value)}
+          placeholder="+15555550100, +15555550200"
+        />
+        <span className="text-[9px] text-slate-500 mt-0.5 block">
+          Comma-separated phone numbers or emails. Leave empty to allow all.
+        </span>
       </label>
 
       <button

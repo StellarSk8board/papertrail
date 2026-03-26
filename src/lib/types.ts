@@ -15,10 +15,20 @@ export interface SkillMetadata {
     kind: string;
     formula?: string;
     package?: string;
+    module?: string;
     bins?: string[];
     label: string;
   }[];
   os?: string[];
+  // Active skill fields — skills with a runtime backend
+  runtime?: string; // backend module name (e.g. 'gmail', 'browser')
+  auth?: {
+    type: "oauth2" | "api-key" | "token";
+    provider?: string;
+    scopes?: string[];
+  };
+  tools?: string[]; // tool names this skill provides (e.g. ['gmail:send'])
+  triggers?: string[]; // event types this skill can emit
 }
 
 export interface AgentSkill {
@@ -26,7 +36,9 @@ export interface AgentSkill {
   name: string;
   content: string; // markdown content
   description?: string;
+  homepage?: string;
   metadata?: SkillMetadata;
+  authStatus?: "connected" | "disconnected" | "expired" | "error"; // for active skills
 }
 
 export interface Message {
@@ -76,6 +88,7 @@ export type AgentStatus =
   | "stuck"
   | "background"
   | "channel-message"
+  | "browsing"
   | "scheduled-task";
 
 export interface BackgroundTask {
@@ -181,7 +194,10 @@ export interface ChannelConfig {
   id: string;
   type: string; // 'imessage', 'slack'
   name: string;
-  config: Record<string, unknown>;
+  config: Record<string, unknown> & {
+    /** Phone numbers / emails / user IDs allowed to message this channel. Empty or ['*'] = allow all. */
+    allowedSenders?: string[];
+  };
   status: "connected" | "disconnected" | "error";
   createdAt: number;
   updatedAt: number;
@@ -243,6 +259,43 @@ export interface MemoryEntry {
   value: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// ─── Skill Tools ────────────────────────────────────────────────
+
+export interface SkillTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  skillId: string;
+}
+
+// ─── Active Orchestrations ─────────────────────────────────────
+
+export interface OrchestrationAssignment {
+  agentId: string;
+  agentName: string;
+  task: string;
+  subtasks: string[];
+  group: number;
+  status: "pending" | "running" | "done" | "error";
+  result?: string;
+}
+
+export interface ActiveOrchestration {
+  id: string;
+  plan: string;
+  assignments: OrchestrationAssignment[];
+  startedAt: number;
+  /** If triggered by a channel message, store context for the reply */
+  channelContext?: {
+    channelId: string;
+    conversationId?: string;
+    sender?: string;
+    originalMessage: string;
+  };
+  /** Progress text shown during orchestration */
+  progressText: string;
 }
 
 export interface AgentMessage {

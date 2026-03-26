@@ -75,9 +75,11 @@ console.log("\n1. Fresh database — all migrations applied");
   const db = freshDb();
   ensureSchema(db);
 
-  assert(tableExists(db, "schema_migrations"), "schema_migrations table exists");
+  assert(
+    tableExists(db, "schema_migrations"),
+    "schema_migrations table exists",
+  );
   assert(tableExists(db, "memory_entries"), "memory_entries table exists");
-  assert(tableExists(db, "scheduled_tasks"), "scheduled_tasks table exists");
   assert(tableExists(db, "task_run_logs"), "task_run_logs table exists");
   assert(tableExists(db, "channel_configs"), "channel_configs table exists");
   assert(tableExists(db, "channel_messages"), "channel_messages table exists");
@@ -89,7 +91,10 @@ console.log("\n1. Fresh database — all migrations applied");
   assert(tableExists(db, "cost_budgets"), "cost_budgets table exists");
 
   const version = getSchemaVersion(db);
-  assert(version === MIGRATIONS.length, `schema version is ${version} (expected ${MIGRATIONS.length})`);
+  assert(
+    version === MIGRATIONS.length,
+    `schema version is ${version} (expected ${MIGRATIONS.length})`,
+  );
 
   db.close();
 }
@@ -146,7 +151,10 @@ console.log("\n3. Already up-to-date — no-op on second run");
     .get().cnt;
 
   assert(vBefore === vAfter, `version unchanged (${vAfter})`);
-  assert(countBefore === countAfter, `migration count unchanged (${countAfter})`);
+  assert(
+    countBefore === countAfter,
+    `migration count unchanged (${countAfter})`,
+  );
 
   db.close();
 }
@@ -156,7 +164,10 @@ console.log("\n4. Incremental migration — version 2 adds a column");
 {
   const db = freshDb();
   ensureSchema(db);
-  assert(!columnExists(db, "cost_records", "model"), "model column does not exist yet");
+  assert(
+    !columnExists(db, "cost_records", "model"),
+    "model column does not exist yet",
+  );
 
   // Simulate adding migration 2
   MIGRATIONS.push({
@@ -166,7 +177,10 @@ console.log("\n4. Incremental migration — version 2 adds a column");
   });
 
   ensureSchema(db);
-  assert(columnExists(db, "cost_records", "model"), "model column added by migration 2");
+  assert(
+    columnExists(db, "cost_records", "model"),
+    "model column added by migration 2",
+  );
   assert(getSchemaVersion(db) === 2, "schema version is 2");
 
   // Clean up so other tests aren't affected

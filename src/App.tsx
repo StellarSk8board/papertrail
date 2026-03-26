@@ -41,7 +41,6 @@ import ChatWindow, { OrchestrationDoneEvent } from "./components/ChatWindow";
 import TerminalPanel from "./components/TerminalPanel";
 import { InstructionRun } from "./components/OfficeInstructions";
 import AgentTasks from "./components/AgentTasks";
-import SkillsPanel from "./components/SkillsPanel";
 import MusicPlayer from "./components/MusicPlayer";
 import ClaudeCodeStatus from "./components/ClaudeCodeStatus";
 import UpdateBanner from "./components/UpdateBanner";
@@ -73,7 +72,7 @@ import {
   getSoundsEnabled,
   initSoundSettings,
 } from "./lib/sounds";
-import { sendClaudeCodeInput, PermissionRequest } from "./lib/terminal";
+import { resolveClaudePermission, PermissionRequest } from "./lib/terminal";
 
 const OfficeCanvas = lazy(() => import("./components/OfficeCanvas"));
 
@@ -192,7 +191,8 @@ export default function App() {
       ]);
       setAgentTeamsEnabled(savedTeams === "1");
       setPermissionPromptsEnabled(savedPerms !== "0");
-      setDebugMode(savedDebug === "1");
+      // setDebugMode(savedDebug === "1");
+      setDebugMode(false); // Force debug mode off for now, to avoid accidentally enabling it in production
       setShowOnboarding(!savedOnboarding);
       setFurnitureLayout(savedFurniture);
       await initSoundSettings();
@@ -326,14 +326,18 @@ export default function App() {
     };
     const unsub = w.electronAPI?.db?.onTriggerFire?.((data) => {
       // Find the target agent, fall back to boss
-      const targetAgent = data.agentId
-        ? agents.find((a) => a.id === data.agentId)
-        : agents.find((a) => a.isBoss);
+      const targetAgent =
+        (data.agentId && agents.find((a) => a.id === data.agentId)) ||
+        agents.find((a) => a.isBoss);
 
       if (!targetAgent) {
         console.warn(
           "[Trigger] No target agent found for trigger:",
           data.triggerName,
+          "| looking for agentId:",
+          data.agentId,
+          "| available agents:",
+          agents.map((a) => ({ id: a.id, name: a.name })),
         );
         return;
       }
@@ -746,6 +750,7 @@ export default function App() {
         agentName,
         agentColor: agents.find((a) => a.name === agentName)?.color,
         permissionReqId: request.reqId,
+        permissionPermId: request.permId,
         permissionTool: request.tool,
         permissionDesc: request.description,
       });
@@ -845,7 +850,6 @@ export default function App() {
             backgroundTasks={backgroundTasks}
             onSaveAgent={handleSaveAutoAgent}
           />
-          <SkillsPanel skills={skills} onUpdate={handleUpdateSkills} />
         </div>
         <div className="px-2 py-1.5 border-t border-gray-800">
           <MusicPlayer />
@@ -879,8 +883,8 @@ export default function App() {
               )
             }
             onDismissAll={() => setNotifications([])}
-            onApprovalResponse={async (notifId, reqId, allow) => {
-              await sendClaudeCodeInput(reqId, allow ? "yes\n" : "no\n");
+            onApprovalResponse={async (notifId, permId, allow) => {
+              await resolveClaudePermission(permId, allow);
               setNotifications((prev) =>
                 prev.map((n) => (n.id === notifId ? { ...n, read: true } : n)),
               );
@@ -913,12 +917,6 @@ export default function App() {
               className="flex-1 btn-pixel text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-200"
             >
               💬 Channels
-            </button>
-            <button
-              onClick={toggleDebug}
-              className={`flex-1 btn-pixel text-[10px] ${debugMode ? "bg-amber-700 hover:bg-amber-600 text-amber-50" : "bg-slate-700 hover:bg-slate-600 text-slate-200"}`}
-            >
-              🐛 Debug {debugMode ? "ON" : "OFF"}
             </button>
           </div>
           <div className="flex gap-1.5">

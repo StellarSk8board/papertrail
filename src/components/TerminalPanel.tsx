@@ -450,6 +450,17 @@ function FileTreeNode({
 }: FileTreeNodeProps) {
   const indent = depth * 16;
   const isOpen = expandedDirs.has(node.path);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+
+  const isExpanded = !node.isDir && expandedFile === node.path;
+
+  useEffect(() => {
+    if (!isExpanded) {
+      setFileContent(null);
+      return;
+    }
+    readFile(node.path).then(setFileContent).catch(() => setFileContent(null));
+  }, [isExpanded, node.path]);
 
   if (node.isDir) {
     return (
@@ -486,7 +497,6 @@ function FileTreeNode({
     );
   }
 
-  const isExpanded = expandedFile === node.path;
   return (
     <>
       <button
@@ -500,13 +510,13 @@ function FileTreeNode({
         >
           {node.name}
         </span>
-        {node.file && (
+        {node.meta && (
           <span className="text-[12px] font-mono text-slate-400 ml-auto pr-3 shrink-0">
-            {node.file.content.length}b
+            {node.meta.size}b
           </span>
         )}
       </button>
-      {isExpanded && node.file && (
+      {isExpanded && fileContent !== null && (
         <pre
           className="bg-slate-900/80 text-[12px] font-mono text-slate-200 overflow-x-auto whitespace-pre-wrap break-all leading-7 max-h-64 overflow-y-auto border-t border-b border-slate-700/50"
           style={{
@@ -516,7 +526,7 @@ function FileTreeNode({
             paddingBottom: 6,
           }}
         >
-          {node.file.content}
+          {fileContent}
         </pre>
       )}
     </>

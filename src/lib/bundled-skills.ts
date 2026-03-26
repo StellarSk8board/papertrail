@@ -1,13 +1,25 @@
 // Bundled skills — imported as raw strings via Vite's ?raw suffix
-import githubRaw from "../basic-skills/github/SKILL.md?raw";
-import mcporterRaw from "../basic-skills/mcporter/SKILL.md?raw";
+import gmailRaw from "../basic-skills/gmail/SKILL.md?raw";
+import googleCalendarRaw from "../basic-skills/google-calendar/SKILL.md?raw";
+import browserRaw from "../basic-skills/browser/SKILL.md?raw";
+import slackRaw from "../basic-skills/slack/SKILL.md?raw";
+import googleSheetsRaw from "../basic-skills/google-sheets/SKILL.md?raw";
+import googleDriveRaw from "../basic-skills/google-drive/SKILL.md?raw";
+import notionRaw from "../basic-skills/notion/SKILL.md?raw";
+import schedulerRaw from "../basic-skills/scheduler/SKILL.md?raw";
 
 import { AgentSkill } from "./types";
 import { parseSkill } from "./skill-parser";
 
 const BUNDLED_RAW: Record<string, string> = {
-  github: githubRaw,
-  mcporter: mcporterRaw,
+  gmail: gmailRaw,
+  "google-calendar": googleCalendarRaw,
+  browser: browserRaw,
+  slack: slackRaw,
+  "google-sheets": googleSheetsRaw,
+  "google-drive": googleDriveRaw,
+  notion: notionRaw,
+  scheduler: schedulerRaw,
 };
 
 let _cache: AgentSkill[] | null = null;
@@ -30,7 +42,7 @@ export function getBundledSkills(): AgentSkill[] {
 }
 
 /**
- * Get a single bundled skill by its slug (e.g. "github", "nano-pdf").
+ * Get a single bundled skill by its slug (e.g. "gmail"). Returns undefined if not found.
  */
 export function getBundledSkill(slug: string): AgentSkill | undefined {
   return getBundledSkills().find((s) => s.id === `bundled:${slug}`);

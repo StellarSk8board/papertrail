@@ -232,10 +232,11 @@ async function callClaudeCodeAdvanced(
       )
     : [];
   if (useTools) {
+    const agentParam = agent?.id ? `?agentId=${encodeURIComponent(agent.id)}` : "";
     mcpServers.push({
       "outworked-skills": {
         type: "http" as const,
-        url: "http://127.0.0.1:7823/mcp",
+        url: `http://127.0.0.1:7823/mcp${agentParam}`,
       },
     });
   }

@@ -11,6 +11,18 @@ const _registry = new Map();
 /** @type {Electron.WebContents | null} */
 let _mainWindowContents = null;
 
+/** @type {(() => void) | null} */
+let _onStatusChange = null;
+
+/**
+ * Track recently sent outbound messages so we can ignore them if they
+ * echo back as "inbound" (e.g. iMessage DB race conditions).
+ * Key: "channelId:conversationId:contentHash", Value: expiry timestamp
+ * @type {Map<string, number>}
+ */
+const _recentOutbound = new Map();
+const OUTBOUND_ECHO_WINDOW_MS = 30_000; // 30 seconds
+
 // ─── Registry management ──────────────────────────────────────
 
 /**
@@ -56,6 +68,7 @@ async function connectChannel(id) {
   try {
     await channel.connect();
     _persistStatus(channel);
+    _onStatusChange?.();
     console.log(
       `[ChannelManager] Connected channel '${id}' (${channel.type})`,
     );
@@ -63,6 +76,7 @@ async function connectChannel(id) {
     channel.status = "error";
     channel.errorMessage = err.message;
     _persistStatus(channel);
+    _onStatusChange?.();
     console.error(
       `[ChannelManager] Failed to connect channel '${id}': ${err.message}`,
     );
@@ -80,6 +94,7 @@ async function disconnectChannel(id) {
   const channel = _getOrThrow(id);
   await channel.disconnect();
   _persistStatus(channel);
+  _onStatusChange?.();
   console.log(`[ChannelManager] Disconnected channel '${id}'`);
 }
 
@@ -104,6 +119,10 @@ async function sendMessage(channelId, conversationId, content) {
   }
 
   await channel.sendMessage(conversationId, content);
+
+  // Track this outbound so we can detect echo-back in inbound polling
+  const echoKey = `${channelId}:${conversationId}:${_hashContent(content)}`;
+  _recentOutbound.set(echoKey, Date.now() + OUTBOUND_ECHO_WINDOW_MS);
 
   // Persist the outbound record.
   db.channelMessageSave({
@@ -246,6 +265,33 @@ function _handleInbound(channelId, msg) {
     timestamp: msg.timestamp || Date.now(),
   };
 
+  // ── Echo detection: skip messages that match a recent outbound ──
+  _pruneExpiredOutbound();
+  const echoKey = `${channelId}:${full.conversationId || ""}:${_hashContent(full.content)}`;
+  if (_recentOutbound.has(echoKey)) {
+    console.log(`[ChannelManager] Skipping echo-back: ${echoKey}`);
+    _recentOutbound.delete(echoKey);
+    return;
+  }
+
+  // ── Sender allowlist: drop messages from unknown senders ──
+  const channel = _registry.get(channelId);
+  const allowedSenders = channel?.config?.allowedSenders;
+  if (Array.isArray(allowedSenders) && allowedSenders.length > 0) {
+    const hasWildcard = allowedSenders.includes("*");
+    if (!hasWildcard && full.sender) {
+      const senderNorm = full.sender.replace(/[\s\-()]/g, "");
+      const isAllowed = allowedSenders.some((s) => {
+        const norm = s.replace(/[\s\-()]/g, "");
+        return senderNorm === norm || senderNorm.endsWith(norm) || norm.endsWith(senderNorm);
+      });
+      if (!isAllowed) {
+        console.log(`[ChannelManager] Blocked message from ${full.sender} — not in allowedSenders`);
+        return;
+      }
+    }
+  }
+
   // Persist
   try {
     db.channelMessageSave(full);
@@ -342,7 +388,35 @@ function _buildChannel(config, { ImessageChannel, SlackChannel }) {
   }
 }
 
+// ─── Helpers ──────────────────────────────────────────────────
+
+/** Simple string hash for echo detection (not cryptographic). */
+function _hashContent(text) {
+  let hash = 0;
+  const str = (text || "").slice(0, 200); // only hash first 200 chars
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
+/** Remove expired entries from the outbound echo tracker. */
+function _pruneExpiredOutbound() {
+  const now = Date.now();
+  for (const [key, expiry] of _recentOutbound) {
+    if (now > expiry) _recentOutbound.delete(key);
+  }
+}
+
 // ─── Exports ──────────────────────────────────────────────────
+
+/**
+ * Set a callback invoked whenever a channel's connection status changes.
+ * @param {() => void} fn
+ */
+function setOnStatusChange(fn) {
+  _onStatusChange = fn;
+}
 
 module.exports = {
   registerChannel,
@@ -351,4 +425,5 @@ module.exports = {
   sendMessage,
   getChannels,
   setupChannelIPC,
+  setOnStatusChange,
 };

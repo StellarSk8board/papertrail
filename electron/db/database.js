@@ -192,11 +192,21 @@ const MIGRATIONS = [
     `,
   },
   // ── Add new migrations here ───────────────────────────────────
-  // {
-  //   version: 2,
-  //   description: "Add model column to cost_records",
-  //   up: `ALTER TABLE cost_records ADD COLUMN model TEXT;`,
-  // },
+  {
+    version: 2,
+    description: "Custom skills table",
+    up: `
+      CREATE TABLE IF NOT EXISTS custom_skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        emoji TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**
@@ -943,6 +953,72 @@ function skillAuthDelete(runtime) {
   db.prepare("DELETE FROM skill_auth WHERE skill_runtime = ?").run(runtime);
 }
 
+// ─── Custom skill operations ─────────────────────────────────────
+
+function customSkillCreate(skill) {
+  const db = getDb();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO custom_skills (id, name, description, content, emoji, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    skill.id,
+    skill.name,
+    skill.description || "",
+    skill.content || "",
+    skill.emoji || null,
+    now,
+    now,
+  );
+  return { ...skill, createdAt: now, updatedAt: now };
+}
+
+function customSkillList() {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM custom_skills ORDER BY created_at DESC")
+    .all()
+    .map(rowToCustomSkill);
+}
+
+function customSkillGet(id) {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM custom_skills WHERE id = ?").get(id);
+  return row ? rowToCustomSkill(row) : null;
+}
+
+function customSkillUpdate(id, updates) {
+  const db = getDb();
+  const fields = [];
+  const values = [];
+  if (updates.name !== undefined) { fields.push("name = ?"); values.push(updates.name); }
+  if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
+  if (updates.content !== undefined) { fields.push("content = ?"); values.push(updates.content); }
+  if (updates.emoji !== undefined) { fields.push("emoji = ?"); values.push(updates.emoji || null); }
+  if (fields.length === 0) return;
+  fields.push("updated_at = ?");
+  values.push(Date.now());
+  values.push(id);
+  db.prepare(`UPDATE custom_skills SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+}
+
+function customSkillDelete(id) {
+  const db = getDb();
+  db.prepare("DELETE FROM custom_skills WHERE id = ?").run(id);
+}
+
+function rowToCustomSkill(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    content: row.content,
+    emoji: row.emoji,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 // ─── Lifecycle ──────────────────────────────────────────────────
 
 function close() {
@@ -1016,4 +1092,11 @@ module.exports = {
   skillAuthGet,
   skillAuthSave,
   skillAuthDelete,
+
+  // Custom skills
+  customSkillCreate,
+  customSkillList,
+  customSkillGet,
+  customSkillUpdate,
+  customSkillDelete,
 };

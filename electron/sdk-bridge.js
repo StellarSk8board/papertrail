@@ -4,7 +4,7 @@
 const { execFileSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
-
+const verbose = process.env.VERBOSE_LOGGING === "true";
 // The SDK is ESM-only, so we use dynamic import (cached after first call).
 let _queryFn = null;
 async function getQuery() {
@@ -98,7 +98,11 @@ async function startSession(reqId, options, callbacks) {
     }
   }, HEARTBEAT_INTERVAL_MS);
 
-  activeSessions.set(reqId, { abortController, done: false, heartbeatInterval });
+  activeSessions.set(reqId, {
+    abortController,
+    done: false,
+    heartbeatInterval,
+  });
 
   // Handle timeout via AbortController
   let timeoutId = null;
@@ -212,6 +216,24 @@ async function startSession(reqId, options, callbacks) {
     const recentApprovals = new Map(); // key → expiry timestamp
 
     sdkOptions.canUseTool = async (toolName, input, context) => {
+      verbose &&
+        console.log(
+          `[sdk-bridge] canUseTool: ${toolName}`,
+          JSON.stringify(input).slice(0, 200),
+        );
+
+      // Auto-approve our own MCP server tools — they run locally and are trusted
+      if (toolName.startsWith("mcp__outworked-skills__")) {
+        verbose &&
+          console.log(
+            `[sdk-bridge] Auto-approved (outworked MCP): ${toolName}`,
+          );
+        return {
+          behavior: "allow",
+          updatedInput: input || {},
+        };
+      }
+
       // Build a key from tool name + command/path to identify duplicate requests
       const inputKey = input?.command || input?.file_path || input?.path || "";
       const approvalKey = `${toolName}:${inputKey}`;
@@ -219,6 +241,8 @@ async function startSession(reqId, options, callbacks) {
       // Auto-approve if this exact tool+input was approved within the last 30s
       const expiry = recentApprovals.get(approvalKey);
       if (expiry && Date.now() < expiry) {
+        verbose &&
+          console.log(`[sdk-bridge] Auto-approved (cached): ${toolName}`);
         return {
           behavior: "allow",
           updatedInput: input || {},
@@ -230,6 +254,10 @@ async function startSession(reqId, options, callbacks) {
       const description =
         context?.title || context?.description || `Wants to use ${toolName}`;
 
+      verbose &&
+        console.log(
+          `[sdk-bridge] Sending permission request: ${permId} for ${toolName}`,
+        );
       // Send permission request to the renderer
       callbacks.onPermissionRequest(reqId, {
         permId,
@@ -243,6 +271,8 @@ async function startSession(reqId, options, callbacks) {
       const allowed = await new Promise((resolve) => {
         pendingPermissions.set(permId, { resolve });
       });
+      verbose &&
+        console.log(`[sdk-bridge] Permission resolved: ${permId} → ${allowed}`);
 
       if (allowed) {
         // Cache the approval for 30s to avoid re-prompting for the same tool
@@ -270,6 +300,14 @@ async function startSession(reqId, options, callbacks) {
     // Stream messages from the async generator
     for await (const message of q) {
       if (activeSessions.get(reqId)?.done) break;
+      verbose && console.log(`[sdk-bridge] message:`);
+      verbose &&
+        console.dir(message, {
+          depth: 4,
+          maxArrayLength: 3,
+          maxStringLength: 100,
+        });
+
       callbacks.onMessage(reqId, message);
 
       // Capture result message for the onDone callback

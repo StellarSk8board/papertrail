@@ -17,9 +17,6 @@ function getDbAPI(): {
   memorySet: (scope: string, key: string, value: string) => Promise<unknown>;
   memorySearch: (scope: string, query?: string) => Promise<unknown[]>;
   memoryDelete: (scope: string, key: string) => Promise<boolean>;
-  schedulerCreate: (task: Record<string, unknown>) => Promise<unknown>;
-  schedulerList: () => Promise<unknown[]>;
-  schedulerDelete: (id: string) => Promise<unknown>;
   channelListLive: () => Promise<
     { id: string; type: string; name: string; status: string; errorMessage: string | null }[]
   >;
@@ -303,55 +300,6 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: "schedule_task",
-    description:
-      'Schedule a recurring or one-time task. The task will run automatically and be assigned to the specified agent. Types: "one-time" (ISO timestamp), "interval" (milliseconds), "cron" (cron expression like "0 9 * * *").',
-    parameters: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Human-readable task name" },
-        type: {
-          type: "string",
-          enum: ["one-time", "interval", "cron"],
-          description: "Schedule type",
-        },
-        schedule: {
-          type: "string",
-          description:
-            'Schedule value: ISO timestamp for one-time, milliseconds for interval, cron expression for cron (e.g. "0 */2 * * *" for every 2 hours)',
-        },
-        agentId: {
-          type: "string",
-          description: "ID of the agent to run this task",
-        },
-        prompt: {
-          type: "string",
-          description: "Instructions for the agent when the task fires",
-        },
-      },
-      required: ["name", "type", "schedule", "agentId", "prompt"],
-    },
-  },
-  {
-    name: "list_scheduled_tasks",
-    description: "List all scheduled tasks and their status.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "cancel_scheduled_task",
-    description: "Cancel (delete) a scheduled task by ID.",
-    parameters: {
-      type: "object",
-      properties: {
-        taskId: { type: "string", description: "ID of the task to cancel" },
-      },
-      required: ["taskId"],
-    },
-  },
-  {
     name: "git_create_pr",
     description:
       "Create a GitHub pull request for the current branch using the gh CLI. Requires gh to be authenticated.",
@@ -553,51 +501,6 @@ export async function executeTool(
       return deleted
         ? `Forgot: [${args.scope}] ${args.key}`
         : `Memory not found: [${args.scope}] ${args.key}`;
-    }
-    case "schedule_task": {
-      const db = getDbAPI();
-      if (!db) return "Error: database not available (not running in Electron)";
-      const taskId = crypto.randomUUID();
-      let nextRunAt: number;
-      if (args.type === "one-time") {
-        nextRunAt = new Date(args.schedule).getTime();
-      } else if (args.type === "interval") {
-        nextRunAt = Date.now() + parseInt(args.schedule, 10);
-      } else {
-        // cron — next run will be calculated by the scheduler
-        nextRunAt = Date.now() + 60000; // approximate, scheduler will correct
-      }
-      await db.schedulerCreate({
-        id: taskId,
-        name: args.name,
-        type: args.type,
-        schedule: args.schedule,
-        agentId: args.agentId,
-        prompt: args.prompt,
-        enabled: true,
-        nextRunAt,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      return `Scheduled task "${args.name}" (${args.type}: ${args.schedule}) — ID: ${taskId}`;
-    }
-    case "list_scheduled_tasks": {
-      const db = getDbAPI();
-      if (!db) return "Error: database not available (not running in Electron)";
-      const tasks = await db.schedulerList();
-      if (!tasks || tasks.length === 0) return "No scheduled tasks.";
-      return (tasks as Record<string, unknown>[])
-        .map(
-          (t) =>
-            `[${t.id}] ${t.name} (${t.type}: ${t.schedule}) — ${t.enabled ? "enabled" : "disabled"}, runs: ${t.runCount}`,
-        )
-        .join("\n");
-    }
-    case "cancel_scheduled_task": {
-      const db = getDbAPI();
-      if (!db) return "Error: database not available (not running in Electron)";
-      await db.schedulerDelete(args.taskId);
-      return `Cancelled task: ${args.taskId}`;
     }
     case "send_message": {
       const db = getDbAPI();

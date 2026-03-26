@@ -11,7 +11,7 @@ interface NotificationCenterProps {
   notifications: AppNotification[];
   onDismiss: (id: string) => void;
   onDismissAll: () => void;
-  onApprovalResponse: (notifId: string, reqId: number, allow: boolean) => void;
+  onApprovalResponse: (notifId: string, permId: string, allow: boolean) => void;
   onNavigateToAgent?: (agentName: string) => void;
 }
 
@@ -161,13 +161,13 @@ export default function NotificationCenter({
                       {/* Approval actions */}
                       {n.type === "approval" &&
                         !n.read &&
-                        n.permissionReqId !== undefined && (
+                        n.permissionPermId && (
                           <div className="flex gap-2 mt-2">
                             <button
                               onClick={() =>
                                 onApprovalResponse(
                                   n.id,
-                                  n.permissionReqId!,
+                                  n.permissionPermId!,
                                   true,
                                 )
                               }
@@ -179,7 +179,7 @@ export default function NotificationCenter({
                               onClick={() =>
                                 onApprovalResponse(
                                   n.id,
-                                  n.permissionReqId!,
+                                  n.permissionPermId!,
                                   false,
                                 )
                               }

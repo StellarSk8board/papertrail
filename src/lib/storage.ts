@@ -18,6 +18,26 @@ import { getSetting, setSetting, getSettingJSON, setSettingJSON } from "./settin
 
 const SKILLS_KEY = "outworked_skills";
 
+/** Parse outworked-skills JSON from frontmatter back into AgentSkill[] */
+function parseOutworkedSkills(raw: unknown): AgentSkill[] {
+  if (!raw) return [];
+  try {
+    const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const arr = JSON.parse(str);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((s: any) => s && s.id && s.name)
+      .map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        content: s.content || "",
+        description: s.description || "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function createAgent(
   partial: Partial<Agent>,
   claudeCodeDefault?: boolean,
@@ -90,6 +110,15 @@ export function buildSubagentMd(agent: Agent, slug: string): string {
   fm += `outworked-color: ${agent.color}\n`;
   if (agent.autoCreated) fm += `outworked-auto-created: true\n`;
   if (agent.isBoss) fm += `outworked-boss: true\n`;
+  if (agent.skills && agent.skills.length > 0) {
+    const skillRefs = agent.skills.map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description || "",
+      content: s.content,
+    }));
+    fm += `outworked-skills: ${JSON.stringify(skillRefs)}\n`;
+  }
 
   // Claude Code fields from subagentDef
   fm += `name: ${slug}\n`;
@@ -322,6 +351,7 @@ export function parseSubagentFrontmatter(content: string): {
     "outworked-color"?: string;
     "outworked-auto-created"?: boolean;
     "outworked-boss"?: boolean;
+    "outworked-skills"?: unknown;
   };
   body: string;
 } {
@@ -423,6 +453,7 @@ export function parseSubagentFrontmatter(content: string): {
         raw["outworked-boss"] === true || raw["outworked-boss"] === "true"
           ? true
           : undefined,
+      "outworked-skills": raw["outworked-skills"],
     },
     body,
   };
@@ -693,7 +724,7 @@ export async function loadAgentsFromDisk(
       personality,
       model: "claude-code",
       provider: "claude-code",
-      skills: [],
+      skills: parseOutworkedSkills(def["outworked-skills"]),
       position,
       spriteKey,
       color,

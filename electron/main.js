@@ -22,6 +22,75 @@ app.setName("Outworked");
 const verbose = process.env.VERBOSE_LOGGING === "true";
 let mainWindow = null;
 
+// ─── Preview window ─────────────────────────────────────────────
+// A separate BrowserWindow that shows detected local dev-server URLs.
+let previewWindow = null;
+
+// Matches common local dev-server URLs in terminal output
+const LOCAL_URL_RE =
+  /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}/gi;
+
+// Cooldown to avoid opening the same URL repeatedly (ms)
+const PREVIEW_COOLDOWN_MS = 5_000;
+let lastPreviewUrl = "";
+let lastPreviewTime = 0;
+
+/**
+ * Open (or reuse) the preview window and navigate to the given URL.
+ * Normalises 0.0.0.0 → localhost so the browser can actually connect.
+ */
+function openPreviewWindow(rawUrl) {
+  const url = rawUrl.replace("0.0.0.0", "localhost");
+
+  // Cooldown: skip if same URL was opened very recently
+  const now = Date.now();
+  if (url === lastPreviewUrl && now - lastPreviewTime < PREVIEW_COOLDOWN_MS) {
+    return;
+  }
+  lastPreviewUrl = url;
+  lastPreviewTime = now;
+
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.loadURL(url);
+    previewWindow.focus();
+    return;
+  }
+
+  previewWindow = new BrowserWindow({
+    width: 1024,
+    height: 768,
+    title: "Outworked — Preview",
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  previewWindow.loadURL(url);
+
+  previewWindow.on("closed", () => {
+    previewWindow = null;
+  });
+
+  // Notify the renderer that a preview was opened
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("preview:opened", url);
+  }
+}
+
+/**
+ * Scan a chunk of text for local dev-server URLs and open a preview.
+ */
+function detectAndPreview(text) {
+  const matches = text.match(LOCAL_URL_RE);
+  if (matches && matches.length > 0) {
+    // Use the last match — typically the one the server prints as "ready"
+    openPreviewWindow(matches[matches.length - 1]);
+  }
+}
+
 // ─── Permission helpers ─────────────────────────────────────────
 // Set a permissive umask so directories and files created by Electron
 // (and inherited by Claude Code child processes) are owner+group
@@ -197,8 +266,37 @@ function caffeineStop() {
 
 /** Call after adding/removing sessions to sync caffeinate state. */
 function syncCaffeinate() {
-  if (sdkBridge.hasActiveSessions()) caffeineStart();
+  const hasChannels = _hasConnectedChannels();
+  if (sdkBridge.hasActiveSessions() || hasChannels) caffeineStart();
   else caffeineStop();
+}
+
+/** Check if any registered channel is currently connected. */
+function _hasConnectedChannels() {
+  try {
+    const channelManager = require("./channels/channel-manager");
+    return channelManager
+      .getChannels()
+      .some((ch) => ch.status === "connected");
+  } catch {
+    return false;
+  }
+}
+
+function setupPreviewIPC() {
+  ipcMain.handle("preview:open", (_event, url) => {
+    if (!url || typeof url !== "string") return false;
+    openPreviewWindow(url);
+    return true;
+  });
+
+  ipcMain.handle("preview:close", () => {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.close();
+      previewWindow = null;
+    }
+    return true;
+  });
 }
 
 function setupShellIPC() {
@@ -219,9 +317,11 @@ function setupShellIPC() {
     shells.set(id, { proc, cwd: safeCwd });
 
     proc.stdout.on("data", (data) => {
+      const text = data.toString();
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("shell:stdout", id, data.toString());
+        mainWindow.webContents.send("shell:stdout", id, text);
       }
+      detectAndPreview(text);
     });
 
     proc.stderr.on("data", (data) => {
@@ -454,6 +554,12 @@ function setupShellIPC() {
       onMessage: (id, message) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("claude-code:event", id, message);
+        }
+        // Scan assistant text and tool results for local dev-server URLs
+        const scanText =
+          message.content || message.result || message.output || "";
+        if (typeof scanText === "string") {
+          detectAndPreview(scanText);
         }
       },
       onHeartbeat: (id) => {
@@ -875,13 +981,21 @@ function setupShellIPC() {
   });
 }
 
-// Clean up child processes on quit
+// Clean up child processes and tunnels on quit
 app.on("before-quit", () => {
   for (const [, entry] of shells) {
     if (entry.proc && !entry.proc.killed) entry.proc.kill();
   }
   shells.clear();
   sdkBridge.abortAll();
+  try {
+    require("./skills/skill-runtime-manager").destroyAll();
+  } catch { /* best effort */ }
+  try {
+    require("./mcp/mcp-server").stopAllTunnels();
+  } catch {
+    /* mcp server may not be loaded */
+  }
   caffeineStop();
 });
 
@@ -2132,14 +2246,6 @@ function setupDatabaseIPC() {
   ipcMain.handle("db:cost:setBudget", safe(db.costSetBudget));
   ipcMain.handle("db:cost:recordDelta", safe(db.costRecordDelta));
 
-  // Scheduler
-  ipcMain.handle("db:scheduler:create", safe(db.schedulerCreate));
-  ipcMain.handle("db:scheduler:list", safe(db.schedulerList));
-  ipcMain.handle("db:scheduler:get", safe(db.schedulerGet));
-  ipcMain.handle("db:scheduler:update", safe(db.schedulerUpdate));
-  ipcMain.handle("db:scheduler:delete", safe(db.schedulerDelete));
-  ipcMain.handle("db:scheduler:getHistory", safe(db.schedulerGetHistory));
-
   // Triggers
   ipcMain.handle("db:trigger:create", safe(db.triggerCreate));
   ipcMain.handle("db:trigger:list", safe(db.triggerList));
@@ -2159,6 +2265,13 @@ function setupDatabaseIPC() {
   ipcMain.handle("db:skill:authGet", safe(db.skillAuthGet));
   ipcMain.handle("db:skill:authSave", safe(db.skillAuthSave));
   ipcMain.handle("db:skill:authDelete", safe(db.skillAuthDelete));
+
+  // Custom skills
+  ipcMain.handle("db:customSkill:create", safe(db.customSkillCreate));
+  ipcMain.handle("db:customSkill:list", safe(db.customSkillList));
+  ipcMain.handle("db:customSkill:get", safe(db.customSkillGet));
+  ipcMain.handle("db:customSkill:update", safe(db.customSkillUpdate));
+  ipcMain.handle("db:customSkill:delete", safe(db.customSkillDelete));
 }
 
 // ─── Auto-updater ───────────────────────────────────────────────
@@ -2359,6 +2472,7 @@ app.whenReady().then(() => {
     ]),
   );
 
+  setupPreviewIPC();
   setupShellIPC();
   setupFilesystemIPC();
   setupFileWatcherIPC();
@@ -2371,16 +2485,22 @@ app.whenReady().then(() => {
   setupAutoUpdater();
   createWindow();
 
-  // ─── Initialize channel manager, skill runtimes, and scheduler ──
+  // ─── Initialize channel manager, skill runtimes ──
   try {
     const channelManager = require("./channels/channel-manager");
+    channelManager.setOnStatusChange(syncCaffeinate);
     channelManager.setupChannelIPC(ipcMain, mainWindow);
   } catch (err) {
     console.error("[channels] Failed to initialize:", err.message);
   }
 
-  // ─── MCP Server (always-running, Streamable HTTP) ───────────────
+  // ─── Skill runtimes + MCP Server ────────────────────────────────
+  const skillManager = require("./skills/skill-runtime-manager");
   const mcpServer = require("./mcp/mcp-server");
+  skillManager.discoverAndRegister()
+    .then(() => skillManager.setupSkillRuntimeIPC(ipcMain, mainWindow))
+    .catch((err) => console.error("[skill-runtimes] Failed to initialize:", err.message));
+  mcpServer.setSkillManager(skillManager);
   mcpServer.start();
 
   // Clean up any stale outworked-skills entry from Claude Code's settings.json.
@@ -2401,20 +2521,6 @@ app.whenReady().then(() => {
     }
   } catch (err) {
     console.error("[mcp] Failed to clean settings:", err.message);
-  }
-
-  try {
-    const { scheduler } = require("./scheduler");
-    scheduler.start(mainWindow);
-
-    // IPC handler for completing a scheduler run from the renderer
-    ipcMain.handle(
-      "scheduler:completeRun",
-      (_event, logId, status, result, error) =>
-        scheduler.completeRun(logId, status, result, error),
-    );
-  } catch (err) {
-    console.error("[scheduler] Failed to initialize:", err.message);
   }
 
   try {

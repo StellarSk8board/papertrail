@@ -1,13 +1,148 @@
 // ─── Outworked MCP Server (Streamable HTTP) ─────────────────────
-// Single always-running MCP server that exposes memory, scheduler,
+// Single always-running MCP server that exposes memory,
 // channel, and skill tools to Claude Code agents over HTTP.
 // Runs in the Electron main process on localhost:7823.
 //
 // Agents connect with: { type: "http", url: "http://127.0.0.1:7823/mcp" }
 
 const http = require("http");
+const https = require("https");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { spawn, execFileSync } = require("child_process");
 const db = require("../db/database");
+
+// ─── Cloudflared tunnel management ──────────────────────────────
+// Active tunnels: key (port or url) → { proc, publicUrl }
+const _tunnels = new Map();
+
+// Path where we store the cloudflared binary
+const CLOUDFLARED_DIR = path.join(os.homedir(), ".outworked", "bin");
+const CLOUDFLARED_BIN = path.join(
+  CLOUDFLARED_DIR,
+  process.platform === "win32" ? "cloudflared.exe" : "cloudflared",
+);
+
+/**
+ * Return the download URL for the current platform/arch from Cloudflare's
+ * GitHub releases (latest stable).
+ */
+function getCloudflaredDownloadUrl() {
+  const plat = process.platform;
+  const arch = process.arch;
+
+  if (plat === "darwin") {
+    // Universal binary works on both Intel and Apple Silicon
+    return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz";
+  }
+  if (plat === "linux") {
+    if (arch === "x64") {
+      return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64";
+    }
+    if (arch === "arm64") {
+      return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64";
+    }
+  }
+  if (plat === "win32") {
+    if (arch === "x64") {
+      return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
+    }
+  }
+  return null;
+}
+
+/**
+ * Follow redirects and download a URL to a file. Returns a promise.
+ */
+function downloadFile(url, dest, maxRedirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) return reject(new Error("Too many redirects"));
+    const mod = url.startsWith("https") ? https : http;
+    mod
+      .get(url, (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          // Follow redirect
+          return downloadFile(
+            res.headers.location,
+            dest,
+            maxRedirects - 1,
+          ).then(resolve, reject);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+        }
+        const file = fs.createWriteStream(dest);
+        res.pipe(file);
+        file.on("finish", () => file.close(resolve));
+        file.on("error", reject);
+      })
+      .on("error", reject);
+  });
+}
+
+/**
+ * Ensure cloudflared binary is available. Downloads it on first use.
+ * Returns the path to the binary.
+ */
+async function ensureCloudflared() {
+  // Check if already downloaded
+  try {
+    fs.accessSync(CLOUDFLARED_BIN, fs.constants.X_OK);
+    return CLOUDFLARED_BIN;
+  } catch {
+    // Not found — download it
+  }
+
+  // Check if system-installed
+  try {
+    const systemPath = execFileSync("which", ["cloudflared"], {
+      encoding: "utf8",
+      timeout: 3000,
+    }).trim();
+    if (systemPath) return systemPath;
+  } catch {
+    // not on PATH
+  }
+
+  const url = getCloudflaredDownloadUrl();
+  if (!url) {
+    throw new Error(
+      `No cloudflared binary available for ${process.platform}/${process.arch}`,
+    );
+  }
+
+  console.log(`[mcp] Downloading cloudflared from ${url}...`);
+  fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+
+  if (url.endsWith(".tgz")) {
+    // macOS: download .tgz, extract the binary
+    const tgzPath = path.join(CLOUDFLARED_DIR, "cloudflared.tgz");
+    await downloadFile(url, tgzPath);
+    // Extract using tar (available on macOS and Linux)
+    execFileSync("tar", ["-xzf", tgzPath, "-C", CLOUDFLARED_DIR], {
+      timeout: 30_000,
+    });
+    try {
+      fs.unlinkSync(tgzPath);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    // Linux/Windows: direct binary download
+    await downloadFile(url, CLOUDFLARED_BIN);
+  }
+
+  // Make executable
+  fs.chmodSync(CLOUDFLARED_BIN, 0o755);
+  console.log(`[mcp] cloudflared installed at ${CLOUDFLARED_BIN}`);
+  return CLOUDFLARED_BIN;
+}
 
 const PORT = 7823;
 let _skillManager = null;
@@ -59,36 +194,6 @@ const BUILTIN_TOOLS = [
     },
   },
   {
-    name: "schedule_task",
-    description:
-      'Schedule a task. Types: "one-time" (ISO timestamp), "interval" (ms), "cron" (expression).',
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        type: { type: "string", enum: ["one-time", "interval", "cron"] },
-        schedule: { type: "string" },
-        agentId: { type: "string" },
-        prompt: { type: "string" },
-      },
-      required: ["name", "type", "schedule", "agentId", "prompt"],
-    },
-  },
-  {
-    name: "list_scheduled_tasks",
-    description: "List all scheduled tasks.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "cancel_scheduled_task",
-    description: "Cancel a scheduled task by ID.",
-    inputSchema: {
-      type: "object",
-      properties: { taskId: { type: "string" } },
-      required: ["taskId"],
-    },
-  },
-  {
     name: "send_message",
     description:
       'Send a message through a connected messaging channel (iMessage, Slack, etc). Use list_channels first to discover available channels. For Slack threads, use "CHANNEL_ID:THREAD_TS" as the conversationId.',
@@ -129,6 +234,45 @@ const BUILTIN_TOOLS = [
       },
       required: ["channelId"],
     },
+  },
+  {
+    name: "tunnel_start",
+    description:
+      "Start a cloudflared tunnel to expose a local port to the internet. Returns a public URL that anyone can use to access the local server. Useful for sharing websites, previews, or demos with others. Cloudflared is automatically downloaded on first use.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: {
+          type: "number",
+          description: "Local port to tunnel (e.g. 3000, 8080)",
+        },
+        url: {
+          type: "string",
+          description:
+            'Full local URL to tunnel (e.g. "http://localhost:3000"). If provided, port is ignored.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "tunnel_stop",
+    description: "Stop a running cloudflared tunnel.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: {
+          type: "number",
+          description: "The port of the tunnel to stop",
+        },
+      },
+      required: ["port"],
+    },
+  },
+  {
+    name: "tunnel_list",
+    description: "List all active cloudflared tunnels and their public URLs.",
+    inputSchema: { type: "object", properties: {} },
   },
 ];
 
@@ -177,44 +321,6 @@ async function executeTool(name, args) {
         ? `Forgot: [${args.scope}] ${args.key}`
         : `Not found: [${args.scope}] ${args.key}`;
     }
-    case "schedule_task": {
-      const id = crypto.randomUUID();
-      let nextRunAt;
-      if (args.type === "one-time") {
-        nextRunAt = new Date(args.schedule).getTime();
-      } else if (args.type === "interval") {
-        nextRunAt = Date.now() + parseInt(args.schedule, 10);
-      } else {
-        nextRunAt = Date.now() + 60000;
-      }
-      db.schedulerCreate({
-        id,
-        name: args.name,
-        type: args.type,
-        schedule: args.schedule,
-        agentId: args.agentId,
-        prompt: args.prompt,
-        enabled: true,
-        nextRunAt,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      return `Scheduled "${args.name}" (${args.type}: ${args.schedule}) — ID: ${id}`;
-    }
-    case "list_scheduled_tasks": {
-      const tasks = db.schedulerList();
-      if (!tasks || tasks.length === 0) return "No scheduled tasks.";
-      return tasks
-        .map(
-          (t) =>
-            `[${t.id}] ${t.name} (${t.type}: ${t.schedule}) — ${t.enabled ? "enabled" : "disabled"}, runs: ${t.runCount}`,
-        )
-        .join("\n");
-    }
-    case "cancel_scheduled_task": {
-      db.schedulerDelete(args.taskId);
-      return `Cancelled task: ${args.taskId}`;
-    }
     case "send_message": {
       const channelManager = require("../channels/channel-manager");
       await channelManager.sendMessage(
@@ -250,18 +356,117 @@ async function executeTool(name, args) {
         )
         .join("\n");
     }
+    case "tunnel_start": {
+      const localUrl = args.url || `http://localhost:${args.port}`;
+      const port = args.port || parseInt(localUrl.match(/:(\d+)/)?.[1], 10);
+      const key = port || localUrl;
+
+      // Reuse existing tunnel for this port
+      if (_tunnels.has(key)) {
+        const existing = _tunnels.get(key);
+        return `Tunnel already running: ${existing.publicUrl}`;
+      }
+
+      // Kill any other active tunnels before starting a new one
+      for (const [existingKey, t] of _tunnels) {
+        try {
+          t.proc.kill();
+        } catch (_) {}
+        _tunnels.delete(existingKey);
+      }
+
+      // Ensure cloudflared is available (downloads on first use)
+      let cloudflaredPath;
+      try {
+        cloudflaredPath = await ensureCloudflared();
+      } catch (err) {
+        return `Error setting up cloudflared: ${err.message}`;
+      }
+
+      // Spawn cloudflared
+      let proc;
+      try {
+        proc = spawn(cloudflaredPath, ["tunnel", "--url", localUrl], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (err) {
+        return `Error starting cloudflared: ${err.message}`;
+      }
+
+      // Parse the public URL from cloudflared's stderr output
+      const publicUrl = await new Promise((resolve, reject) => {
+        let output = "";
+        const timeout = setTimeout(() => {
+          reject(
+            new Error("Timed out waiting for cloudflared tunnel URL (15s)"),
+          );
+        }, 15_000);
+
+        const onData = (data) => {
+          output += data.toString();
+          // cloudflared prints the URL to stderr like:
+          // |  https://random-name.trycloudflare.com |
+          const match = output.match(
+            /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i,
+          );
+          if (match) {
+            clearTimeout(timeout);
+            resolve(match[0]);
+          }
+        };
+
+        proc.stderr.on("data", onData);
+        proc.stdout.on("data", onData);
+
+        proc.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        proc.on("exit", (code) => {
+          if (code !== null && code !== 0) {
+            clearTimeout(timeout);
+            reject(
+              new Error(
+                `cloudflared exited with code ${code}. Output: ${output.slice(0, 500)}`,
+              ),
+            );
+          }
+        });
+      });
+
+      _tunnels.set(key, { proc, publicUrl, localUrl });
+
+      // Clean up on process exit
+      proc.on("exit", () => {
+        _tunnels.delete(key);
+      });
+
+      return `Tunnel started!\nPublic URL: ${publicUrl}\nLocal: ${localUrl}\n\nAnyone with this link can access the local server while the tunnel is running.`;
+    }
+    case "tunnel_stop": {
+      const stopKey = args.port;
+      const tunnel = _tunnels.get(stopKey);
+      if (!tunnel) {
+        return `No active tunnel found for port ${args.port}`;
+      }
+      tunnel.proc.kill();
+      _tunnels.delete(stopKey);
+      return `Tunnel for port ${args.port} stopped.`;
+    }
+    case "tunnel_list": {
+      if (_tunnels.size === 0) return "No active tunnels.";
+      const lines = [];
+      for (const [key, t] of _tunnels) {
+        lines.push(`[port ${key}] ${t.publicUrl} → ${t.localUrl}`);
+      }
+      return lines.join("\n");
+    }
     default: {
-      // Skill tools: "runtime:action" format
+      // Skill tools — resolve via tool index
       if (!_skillManager) return `Error: skill runtime manager not available`;
-      const colonIdx = name.indexOf(":");
-      if (colonIdx === -1) return `Unknown tool: ${name}`;
-      const prefix = name.slice(0, colonIdx);
-      const runtimeMap = {
-        gmail: "gmail",
-        calendar: "google-calendar",
-        browse: "browser",
-      };
-      const resolvedRuntime = runtimeMap[prefix] || prefix;
+      const resolvedRuntime = _skillManager.resolveToolRuntime(name);
+      if (!resolvedRuntime) return `Unknown tool: ${name}`;
       try {
         const result = await _skillManager.executeTool(
           resolvedRuntime,
@@ -280,7 +485,7 @@ async function executeTool(name, args) {
 
 // ─── MCP JSON-RPC handler ───────────────────────────────────────
 
-async function handleMcpRequest(msg) {
+async function handleMcpRequest(msg, agentId = null) {
   const { id, method, params } = msg;
 
   console.log(`[mcp] Received request: ${method} with params:`, params);
@@ -313,6 +518,10 @@ async function handleMcpRequest(msg) {
     case "tools/call": {
       const toolName = params?.name;
       const toolArgs = params?.arguments || {};
+      // Inject agentId from the session URL if not explicitly provided
+      if (agentId && !toolArgs.agentId) {
+        toolArgs.agentId = agentId;
+      }
       try {
         const result = await executeTool(toolName, toolArgs);
         return {
@@ -374,11 +583,13 @@ function start() {
       return;
     }
 
-    if (req.url !== "/mcp") {
+    const reqUrl = new URL(req.url, "http://127.0.0.1");
+    if (reqUrl.pathname !== "/mcp") {
       res.writeHead(404);
       res.end();
       return;
     }
+    const _reqAgentId = reqUrl.searchParams.get("agentId") || null;
 
     if (req.method === "DELETE") {
       // Session termination — we're stateless so just acknowledge
@@ -418,7 +629,7 @@ function start() {
           return;
         }
 
-        const response = await handleMcpRequest(msg);
+        const response = await handleMcpRequest(msg, _reqAgentId);
 
         if (!response) {
           // Notification — no response body, just 202
@@ -458,4 +669,18 @@ function stop() {
   }
 }
 
-module.exports = { start, stop, setSkillManager, PORT };
+/**
+ * Kill all active cloudflared tunnels (call on app quit).
+ */
+function stopAllTunnels() {
+  for (const [key, t] of _tunnels) {
+    try {
+      t.proc.kill();
+    } catch {
+      /* ignore */
+    }
+  }
+  _tunnels.clear();
+}
+
+module.exports = { start, stop, setSkillManager, stopAllTunnels, PORT };

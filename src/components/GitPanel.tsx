@@ -414,9 +414,7 @@ export default function GitPanel({ workspaceDir }: GitPanelProps) {
               {syncInfo} · {branchInfo.branches?.length || 0} branches
             </span>
             <button
-              onClick={() =>
-                setOverlay(overlay === "new-branch" ? null : "new-branch")
-              }
+              onClick={() => setOverlay("new-branch")}
               className="text-[9px] font-pixel text-indigo-400 hover:text-indigo-300"
             >
               + new

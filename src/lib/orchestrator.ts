@@ -7,6 +7,7 @@ import {
   SubagentDef,
 } from "./types";
 import { sendMessage, sendMessageWithCost } from "./ai";
+import { PermissionRequest } from "./terminal";
 import { getSetting } from "./settings";
 import {
   listFiles,
@@ -86,11 +87,12 @@ For implementation tasks (writing code, creating files, building features, fixin
 }
 
 Rules:
+- You can add new Agents if needed, but be concise and only create what is necessary. Each new Agent must have a distinct name, a clear role, and a detailed personality prompt that defines their expertise.
 - "newAgents" can be an empty array if existing employees are sufficient
 - You may only add 5 new employees per instruction — be concise and only create what is necessary
-- New agents should have distinct names, clear roles, and detailed personality prompts that define their expertise
 - You may assign tasks to both existing AND newly created employees
 - Use EXACT employee names (existing or newly created) in assignments
+- NEVER assign tasks to yourself (the Office Manager / Boss). You plan and coordinate — employees execute.
 - Each assignment should be a clear, actionable task
 - Each assignment MUST include a "subtasks" array: 2-5 short, concrete action items that break down the task
 - You may assign multiple tasks to one employee or spread across employees
@@ -104,7 +106,13 @@ PARALLEL EXECUTION — "group" field:
 - If tasks are independent (e.g. frontend + backend, different files), put them in the SAME group
 - If task B depends on the output of task A, put A in a LOWER group number than B
 - If ALL tasks are independent, put them ALL in group 1
-- Maximize parallelism — only use sequential groups when there's a real dependency`;
+- Maximize parallelism — only use sequential groups when there's a real dependency
+
+WEB PREVIEW — serving and sharing websites:
+- When a task involves creating a website, landing page, or any HTML/frontend project, the FINAL subtask for the responsible agent MUST be to start a local web server (e.g. "npx serve ." or "npx serve dist" or "npm run dev") so the user can preview the result.
+- The app will automatically detect the local server URL and open a preview window for the user.
+- Do NOT tell the agent to open a browser — just start the server. The preview is handled automatically.
+- To share the site with someone externally, the agent should use the tunnel_start tool to get a public URL, then use send_message to share the link via iMessage or Slack.`;
 
 /**
  * Extract and parse a JSON object from an LLM reply that may contain
@@ -138,6 +146,8 @@ export async function routeTasks(
   keys: ApiKeys,
   routerModel: { model: Agent["model"]; provider: Agent["provider"] },
   signal?: AbortSignal,
+  onStream?: (text: string) => void,
+  onPermissionRequest?: (request: PermissionRequest) => void,
 ): Promise<OrchestrationResult> {
   const employeeList = agents
     .map((a) => `- ${a.name} (${a.role}): ${a.personality.slice(0, 120)}`)
@@ -276,9 +286,9 @@ export async function routeTasks(
         ? prompt
         : `${prompt}\n\nIMPORTANT: Respond ONLY with a valid JSON object. No markdown, no explanation — just the raw JSON.`,
       keys,
-      () => {},
+      onStream ?? (() => {}),
       signal,
-      { useTools: true },
+      { useTools: true, onPermissionRequest },
     );
     const reply = result.text;
     if (result.cost) routerCost = result.cost;
@@ -305,7 +315,7 @@ export async function routeTasks(
       const parsed = extractJson(reply);
 
       // Parse new agent specs
-      const newAgents: NewAgentSpec[] = (parsed.newAgents || []).map(
+      const newAgents: NewAgentSpec[] = ((parsed.newAgents || []) as Array<{ name: string; role: string; personality: string }>).map(
         (a: { name: string; role: string; personality: string }) => ({
           name: a.name,
           role: a.role,
@@ -313,13 +323,13 @@ export async function routeTasks(
         }),
       );
 
-      const assignments: TaskAssignment[] = (parsed.assignments || []).map(
-        (a: {
+      const assignments: TaskAssignment[] = ((parsed.assignments || []) as Array<{
           agentName: string;
           task: string;
           subtasks?: string[];
           group?: number;
-        }) => {
+        }>).map(
+        (a) => {
           const agent = agents.find(
             (ag) => ag.name.toLowerCase() === a.agentName.toLowerCase(),
           );
@@ -353,12 +363,12 @@ export async function routeTasks(
       }
 
       // Ensure the working directory exists
-      const workDir = sanitizeSlug(parsed.workingDirectory || "project");
+      const workDir = sanitizeSlug((parsed.workingDirectory as string) || "project");
       await ensureWorkingDirectory(workDir);
 
       return {
         assignments,
-        plan: parsed.plan || "",
+        plan: (parsed.plan as string) || "",
         newAgents,
         workingDirectory: workDir,
         cost: routerCost,
@@ -615,6 +625,7 @@ export async function executeTask(
   onClaudeCodeEvent?: (event: { type: string; toolName?: string; toolInput?: Record<string, unknown>; text?: string }) => void,
   onSlow?: (agentName: string) => void,
   onStuck?: (agentName: string) => void,
+  onPermissionRequest?: (request: PermissionRequest) => void,
 ): Promise<{
   agent: Agent;
   reply: string;
@@ -706,6 +717,7 @@ export async function executeTask(
         colleagues,
         onToolCall: wrappedOnToolCall,
         onClaudeCodeEvent: wrappedOnClaudeCodeEvent,
+        onPermissionRequest,
       },
     );
 
@@ -819,6 +831,7 @@ export interface AgentTeamCallbacks {
     tool: string,
     description: string,
     reqId?: number,
+    permId?: string,
   ) => void;
 }
 
@@ -850,6 +863,8 @@ export async function routeTasksViaClaudeCode(
   // Build subagent definitions from all subagent-backed employees
   const agentDefs: Record<string, SubagentDef> = {};
   const knownNames = new Set<string>();
+  const bossAgent = agents.find((a) => a.isBoss);
+  const bossName = bossAgent?.name?.toLowerCase() || "boss";
   for (const a of agents) {
     if (a.isBoss) continue;
     knownNames.add(a.name.toLowerCase());
@@ -890,8 +905,13 @@ ${
 - For implementation tasks (writing code, creating files, building features, fixing bugs), delegate to the appropriate employee(s) via the Agent tool. NEVER do implementation yourself.
 - Break complex tasks into subtasks and delegate to the right employee.
 - Delegate to multiple agents in parallel when subtasks are independent.
-- After delegations complete, provide a brief summary.`
-    : `- No employees yet. Tell the user to hire employees first.`
+- After delegations complete, provide a brief summary.
+- ALWAYS prefer delegating to agents listed in the Team section above. Use their EXACT names.
+- If you need expertise that no current employee has, you may create a new agent via the Agent tool — give it a clear, unique name and a descriptive prompt. But ALWAYS prefer existing employees when possible.
+- NEVER delegate to yourself (the Boss). You coordinate — employees do the work. Your name is NOT in the team roster for a reason.
+- NEVER use the Agent tool to spawn "helper" or "general-purpose" sub-agents for yourself. Every delegation must target a specific employee (existing or new).
+- Keep delegations focused — do NOT chain agents (an agent delegating to another agent). Each agent should complete its own task independently.`
+    : `- No employees yet. Tell the user to hire employees first, or answer the question yourself.`
 }`;
 
   const options: ClaudeCodeAdvancedOptions = {
@@ -954,6 +974,14 @@ ${
           0,
           80,
         );
+
+        // Detect self-delegation — boss trying to delegate to itself
+        if (agentName && agentName.toLowerCase() === bossName) {
+          onDebug?.(
+            `[orchestrator] WARNING: Boss tried to delegate to itself (${agentName}). This will likely cause a deadlock.`,
+          );
+        }
+
         if (agentName) {
           agentLastActivity.set(agentName.toLowerCase(), Date.now());
           agentSlowFired.delete(agentName.toLowerCase());
@@ -968,6 +996,9 @@ ${
             input.role ??
             taskDesc ??
             "Specialist") as string;
+          onDebug?.(
+            `[orchestrator] Boss created new agent "${agentName}" (not in roster). This runs as a blocking subprocess.`,
+          );
           callbacks.onNewAgent?.(agentName, desc);
         }
         callbacks.onAgentStatus?.(
@@ -996,7 +1027,8 @@ ${
           (ev.message as string) ||
           `Wants to use ${toolName}`;
         const agentName = ev.agent_name as string | undefined;
-        callbacks.onPermissionRequest?.(agentName, toolName, desc);
+        const permId = ev.perm_id as string | undefined;
+        callbacks.onPermissionRequest?.(agentName, toolName, desc, undefined, permId);
         if (agentName) {
           callbacks.onAgentStatus?.(
             agentName,
@@ -1013,10 +1045,11 @@ ${
       : undefined,
     onPermissionRequest: (request) => {
       callbacks.onPermissionRequest?.(
-        undefined,
+        request.agentName,
         request.tool,
         request.description,
         request.reqId,
+        request.permId,
       );
     },
   };

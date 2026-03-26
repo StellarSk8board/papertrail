@@ -55,6 +55,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Set GitHub token so git/gh commands have GH_TOKEN in their environment
   setGithubToken: (token) => ipcRenderer.invoke("shell:setGithubToken", token),
 
+  // Preview window
+  preview: {
+    open: (url) => ipcRenderer.invoke("preview:open", url),
+    close: () => ipcRenderer.invoke("preview:close"),
+    onOpened: (listener) => {
+      ipcRenderer.on("preview:opened", listener);
+      return () => ipcRenderer.removeListener("preview:opened", listener);
+    },
+  },
+
   // Claude Code integration (streaming)
   claudeCode: {
     start: (prompt, systemPrompt, cwd, timeoutMs) =>
@@ -185,16 +195,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
         cumulativeOutputTokens,
       ),
 
-    // Scheduler
-    schedulerCreate: (task) => ipcRenderer.invoke("db:scheduler:create", task),
-    schedulerList: () => ipcRenderer.invoke("db:scheduler:list"),
-    schedulerGet: (id) => ipcRenderer.invoke("db:scheduler:get", id),
-    schedulerUpdate: (id, updates) =>
-      ipcRenderer.invoke("db:scheduler:update", id, updates),
-    schedulerDelete: (id) => ipcRenderer.invoke("db:scheduler:delete", id),
-    schedulerGetHistory: (taskId, limit) =>
-      ipcRenderer.invoke("db:scheduler:getHistory", taskId, limit),
-
     // Triggers
     triggerCreate: (trigger) =>
       ipcRenderer.invoke("db:trigger:create", trigger),
@@ -216,12 +216,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
     channelMessageList: (channelId, limit) =>
       ipcRenderer.invoke("db:channel:messageList", channelId, limit),
 
-    // Scheduler events
-    onSchedulerFire: (cb) => {
-      const listener = (_event, task) => cb(task);
-      ipcRenderer.on("scheduler:fire", listener);
-      return () => ipcRenderer.removeListener("scheduler:fire", listener);
-    },
+    // Skill auth (DB layer)
+    skillAuthGet: (runtime) => ipcRenderer.invoke("db:skill:authGet", runtime),
+    skillAuthSave: (runtime, credentials, config, status) =>
+      ipcRenderer.invoke(
+        "db:skill:authSave",
+        runtime,
+        credentials,
+        config,
+        status,
+      ),
+    skillAuthDelete: (runtime) =>
+      ipcRenderer.invoke("db:skill:authDelete", runtime),
+
+    // Custom skills
+    customSkillCreate: (skill) =>
+      ipcRenderer.invoke("db:customSkill:create", skill),
+    customSkillList: () => ipcRenderer.invoke("db:customSkill:list"),
+    customSkillGet: (id) => ipcRenderer.invoke("db:customSkill:get", id),
+    customSkillUpdate: (id, updates) =>
+      ipcRenderer.invoke("db:customSkill:update", id, updates),
+    customSkillDelete: (id) => ipcRenderer.invoke("db:customSkill:delete", id),
+
+    // Skill runtime auth (triggers OAuth flow in main process)
+    skillRuntimeAuth: (runtime) =>
+      ipcRenderer.invoke("skill-runtime:authenticate", runtime),
+    skillRuntimeDisconnect: (runtime) =>
+      ipcRenderer.invoke("skill-runtime:disconnect", runtime),
+    skillRuntimeStatus: (runtime) =>
+      ipcRenderer.invoke("skill-runtime:status", runtime),
 
     // Channel manager (lifecycle + messaging)
     channelRegister: (config) => ipcRenderer.invoke("channel:register", config),

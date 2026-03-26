@@ -16,6 +16,7 @@ export interface AppNotification {
   read: boolean;
   /** For approval notifications — permission request details */
   permissionReqId?: number;
+  permissionPermId?: string;
   permissionTool?: string;
   permissionDesc?: string;
 }

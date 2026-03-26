@@ -10,14 +10,60 @@ export function parseSkill(raw: string): AgentSkill {
 
   const name = extractField(frontmatter, "name") || "Unnamed Skill";
   const description = extractField(frontmatter, "description") || "";
-  const emoji = extractNestedField(frontmatter, "emoji");
+  const homepage = extractField(frontmatter, "homepage") || undefined;
+  const emoji =
+    extractField(frontmatter, "emoji") ||
+    extractNestedField(frontmatter, "emoji");
   const metadata = parseMetadata(frontmatter);
+
+  // Pull emoji from metadata if not at top level
+  const resolvedEmoji = emoji || metadata?.emoji;
+
+  // Parse active skill fields (top-level in frontmatter)
+  const runtime = extractField(frontmatter, "runtime");
+  if (runtime) {
+    if (!metadata) {
+      // parseMetadata returned null but we have active skill fields
+    }
+    const meta = metadata || ({} as SkillMetadata);
+    meta.runtime = runtime;
+
+    // Parse auth block
+    const authType = extractNestedField(frontmatter, "type");
+    const authProvider = extractNestedField(frontmatter, "provider");
+    const authScopes = extractListAfterKey(frontmatter, "scopes");
+    if (authType) {
+      meta.auth = {
+        type: authType as "oauth2" | "api-key" | "token",
+        ...(authProvider && { provider: authProvider }),
+        ...(authScopes.length && { scopes: authScopes }),
+      };
+    }
+
+    // Parse tools list
+    const tools = extractListAfterKey(frontmatter, "tools");
+    if (tools.length) meta.tools = tools;
+
+    // Parse triggers list
+    const triggers = extractListAfterKey(frontmatter, "triggers");
+    if (triggers.length) meta.triggers = triggers;
+
+    return {
+      id: crypto.randomUUID(),
+      name: resolvedEmoji ? `${resolvedEmoji} ${name}` : name,
+      content: body.trim(),
+      description,
+      ...(homepage && { homepage }),
+      metadata: meta,
+    };
+  }
 
   return {
     id: crypto.randomUUID(),
-    name: emoji ? `${emoji} ${name}` : name,
+    name: resolvedEmoji ? `${resolvedEmoji} ${name}` : name,
     content: body.trim(),
     description,
+    ...(homepage && { homepage }),
     metadata: metadata || undefined,
   };
 }
@@ -100,13 +146,116 @@ function extractNestedField(fm: string, key: string): string | null {
 }
 
 /**
+ * Try to parse the metadata block as JSON — handles both direct metadata objects
+ * and the openclaw envelope format: metadata: { "openclaw": { ... } }
+ */
+function tryParseMetadataJSON(fm: string): SkillMetadata | null {
+  // Find the metadata block — everything after "metadata:" until next top-level key or end
+  const metaStart = fm.match(/^metadata:\s*$/m) || fm.match(/^metadata:\s*\{/m);
+  if (!metaStart) return null;
+
+  const startIdx = metaStart.index! + metaStart[0].indexOf("{");
+  if (startIdx < metaStart.index!) return null; // no opening brace
+
+  // Find matching closing brace
+  let depth = 0;
+  let endIdx = -1;
+  for (let i = startIdx; i < fm.length; i++) {
+    if (fm[i] === "{") depth++;
+    else if (fm[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+  if (endIdx === -1) return null;
+
+  try {
+    // Clean trailing commas (common in hand-written JSON)
+    const jsonStr = fm
+      .slice(startIdx, endIdx + 1)
+      .replace(/,\s*([\]}])/g, "$1");
+    const parsed = JSON.parse(jsonStr);
+
+    // Unwrap openclaw envelope if present
+    const source = parsed.openclaw || parsed;
+    return jsonToSkillMetadata(source);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Convert a parsed JSON object to SkillMetadata.
+ */
+function jsonToSkillMetadata(obj: Record<string, unknown>): SkillMetadata {
+  const meta: SkillMetadata = {};
+
+  if (typeof obj.emoji === "string") meta.emoji = obj.emoji;
+
+  if (Array.isArray(obj.os)) {
+    meta.os = obj.os.filter((s): s is string => typeof s === "string");
+  }
+
+  const req = obj.requires as Record<string, unknown> | undefined;
+  if (req && typeof req === "object") {
+    meta.requires = {};
+    if (Array.isArray(req.bins))
+      meta.requires.bins = req.bins.filter(
+        (s): s is string => typeof s === "string",
+      );
+    if (Array.isArray(req.anyBins))
+      meta.requires.anyBins = req.anyBins.filter(
+        (s): s is string => typeof s === "string",
+      );
+    if (Array.isArray(req.config))
+      meta.requires.config = req.config.filter(
+        (s): s is string => typeof s === "string",
+      );
+  }
+
+  if (Array.isArray(obj.install)) {
+    const installs: NonNullable<SkillMetadata["install"]> = [];
+    for (const item of obj.install) {
+      if (typeof item === "object" && item && "id" in item && "kind" in item) {
+        const i = item as Record<string, unknown>;
+        installs.push({
+          id: String(i.id),
+          kind: String(i.kind),
+          label: String(i.label || ""),
+          ...(typeof i.formula === "string" && { formula: i.formula }),
+          ...(typeof i.package === "string" && { package: i.package }),
+          ...(typeof i.module === "string" && { module: i.module }),
+          ...(Array.isArray(i.bins) && {
+            bins: i.bins.filter((s): s is string => typeof s === "string"),
+          }),
+        });
+      }
+    }
+    if (installs.length) meta.install = installs;
+  }
+
+  return meta;
+}
+
+/**
  * Parse the metadata block from frontmatter.
- * Extracts requires (bins/anyBins), install instructions, and os constraints.
+ * Supports three formats:
+ *   1. Direct YAML metadata fields
+ *   2. JSON metadata object
+ *   3. openclaw envelope: metadata: { "openclaw": { ... } }
  */
 function parseMetadata(fm: string): SkillMetadata | null {
   if (!fm) return null;
   if (!fm.includes("metadata")) return null;
 
+  // Try JSON/openclaw format first
+  const jsonMeta = tryParseMetadataJSON(fm);
+  if (jsonMeta && Object.keys(jsonMeta).length > 0) return jsonMeta;
+
+  // Fall back to YAML-style extraction
   const meta: SkillMetadata = {};
 
   // Extract emoji
@@ -180,6 +329,7 @@ function parseInstallBlocks(fm: string): SkillMetadata["install"] {
     );
     const formula = block.match(/"formula"\s*:\s*"([^"]+)"/)?.[1];
     const pkg = block.match(/"package"\s*:\s*"([^"]+)"/)?.[1];
+    const mod = block.match(/"module"\s*:\s*"([^"]+)"/)?.[1];
     const binsMatch = block.match(/"bins"\s*:\s*\[([^\]]+)\]/);
     const bins = binsMatch
       ? binsMatch[1]
@@ -194,6 +344,7 @@ function parseInstallBlocks(fm: string): SkillMetadata["install"] {
       label: jm[3],
       ...(formula && { formula }),
       ...(pkg && { package: pkg }),
+      ...(mod && { module: mod }),
       ...(bins.length && { bins }),
     });
   }
@@ -213,6 +364,7 @@ function parseInstallBlocks(fm: string): SkillMetadata["install"] {
       const label = text.match(/label:\s*["']?(.+?)["']?\s*$/m)?.[1] || "";
       const formula = text.match(/formula:\s*(\S+)/)?.[1];
       const pkg = text.match(/package:\s*(\S+)/)?.[1];
+      const mod = text.match(/module:\s*(\S+)/)?.[1];
       const binsMatch = text.match(/bins:\s*\n((?:\s+-\s*.+\n?)+)/);
       const bins = binsMatch
         ? binsMatch[1]
@@ -227,6 +379,7 @@ function parseInstallBlocks(fm: string): SkillMetadata["install"] {
           label,
           ...(formula && { formula }),
           ...(pkg && { package: pkg }),
+          ...(mod && { module: mod }),
           ...(bins.length && { bins }),
         });
       }
