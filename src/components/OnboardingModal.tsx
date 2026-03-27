@@ -5,7 +5,7 @@ import {
   writeClaudeSettings,
 } from "../lib/terminal";
 
-type Step = "welcome" | "claude-code" | "permissions" | "ready";
+type Step = "welcome" | "claude-code" | "permissions" | "channels" | "ready";
 
 const RECOMMENDED_PERMISSIONS = {
   allow: [
@@ -95,7 +95,7 @@ export default function OnboardingModal({
       <div className="bg-slate-800 border border-slate-600 rounded-xl w-[520px] shadow-2xl overflow-hidden">
         {/* Progress bar */}
         <div className="flex h-1 bg-slate-700">
-          {(["welcome", "claude-code", "permissions", "ready"] as Step[]).map(
+          {(["welcome", "claude-code", "permissions", "channels", "ready"] as Step[]).map(
             (s, i) => (
               <div
                 key={s}
@@ -103,7 +103,7 @@ export default function OnboardingModal({
                 style={{
                   backgroundColor:
                     i <=
-                    ["welcome", "claude-code", "permissions", "ready"].indexOf(
+                    ["welcome", "claude-code", "permissions", "channels", "ready"].indexOf(
                       step,
                     )
                       ? "#6366f1"
@@ -131,7 +131,7 @@ export default function OnboardingModal({
               </p>
               <div className="bg-slate-900/60 rounded-lg p-4 mb-6 text-left space-y-2">
                 <p className="text-[11px] font-pixel text-indigo-300">
-                  Quick setup — 3 steps:
+                  Quick setup — 4 steps:
                 </p>
                 <div className="flex items-center gap-2 text-xs text-slate-300">
                   <span className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -148,6 +148,12 @@ export default function OnboardingModal({
                 <div className="flex items-center gap-2 text-xs text-slate-300">
                   <span className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold shrink-0">
                     3
+                  </span>
+                  Learn about Channels & Auto Approve
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <span className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+                    4
                   </span>
                   Talk to The Boss to start working
                 </div>
@@ -305,6 +311,80 @@ export default function OnboardingModal({
                 >
                   Customize Manually
                 </button>
+                <button
+                  onClick={() => setStep("channels")}
+                  className="btn-pixel bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-5 py-2"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === "channels" && (
+            <div>
+              <h2 className="text-lg font-pixel text-white mb-1">
+                Channels & Auto Approve
+              </h2>
+              <p className="text-xs text-slate-400 mb-5">
+                Two powerful features that let your agents work more
+                autonomously.
+              </p>
+
+              <div className="space-y-3 mb-6">
+                {/* Channels */}
+                <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm">📡</span>
+                    <span className="text-xs font-pixel text-slate-200">
+                      Channels
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-3">
+                    Channels connect your agents to external messaging platforms
+                    like iMessage and Slack. When a message arrives, it gets
+                    routed to an agent who can read and reply automatically.
+                  </p>
+                  <div className="space-y-1.5 text-[11px] text-slate-400">
+                    <div className="flex items-start gap-2">
+                      <span className="text-indigo-400 mt-0.5 shrink-0">▸</span>
+                      <span>
+                        <span className="text-slate-200">iMessage</span> —
+                        read & reply to texts on macOS
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-indigo-400 mt-0.5 shrink-0">▸</span>
+                      <span>
+                        <span className="text-slate-200">Slack</span> —
+                        monitor channels and respond as a bot
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Auto Approve */}
+                <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm">⚡</span>
+                    <span className="text-xs font-pixel text-slate-200">
+                      Auto Approve
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-2">
+                    When enabled, agents can use tools (file edits, terminal
+                    commands, etc.) without waiting for you to approve each
+                    action. This lets them work much faster — especially useful
+                    when you're away or running multiple agents.
+                  </p>
+                  <p className="text-[11px] text-amber-400/80">
+                    Toggle it anytime from the toolbar. Your deny-list rules
+                    still apply regardless.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end">
                 <button
                   onClick={() => setStep("ready")}
                   className="btn-pixel bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-5 py-2"
