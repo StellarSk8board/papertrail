@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="build/icon.png" alt="PaperTrail" width="128" />
+  <img src="build/icon.png" alt="PaperTrail" width="400" />
 </p>
-
-<h1 align="center">PaperTrail</h1>
 
 <p align="center">
   <strong>A desktop app that turns Claude into a team of AI employees.</strong><br/>
