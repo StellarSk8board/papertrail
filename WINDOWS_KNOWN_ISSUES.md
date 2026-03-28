@@ -1,4 +1,4 @@
-# Windows Known Issues — Outworked
+# Windows Known Issues — PaperTrail
 
 **App version:** 0.3.0
 **Last updated:** 2026-03-27
@@ -48,10 +48,10 @@ Known issues on Windows that have been evaluated but not fixed in the current MV
 
 ---
 
-## KI-06 — App data in `~/.outworked` instead of `%APPDATA%`
+## KI-06 — App data in `~/.papertrail` instead of `%APPDATA%`
 
 **Severity:** LOW (UX deviation)
-**Detail:** The app stores data in `%USERPROFILE%\.outworked\outworked.db` rather than the Windows-conventional `%APPDATA%\Outworked`. Both locations work. The `.outworked` hidden directory is invisible in Windows Explorer by default.
+**Detail:** The app stores data in `%USERPROFILE%\.papertrail\papertrail.db` rather than the Windows-conventional `%APPDATA%\PaperTrail`. Both locations work. The `.papertrail` hidden directory is invisible in Windows Explorer by default.
 **Impact:** None for functionality. Power users may find it non-standard.
 
 ---

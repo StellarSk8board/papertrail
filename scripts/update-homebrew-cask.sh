@@ -11,7 +11,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 TAP_DIR="${1:-$(dirname "$REPO_ROOT")/homebrew-tap}"
 
 VERSION=$(node -p "require('$REPO_ROOT/package.json').version")
-DMG_PATH="$REPO_ROOT/dist/Outworked-${VERSION}.dmg"
+DMG_PATH="$REPO_ROOT/dist/PaperTrail-${VERSION}.dmg"
 
 if [ ! -f "$DMG_PATH" ]; then
   echo "DMG not found at $DMG_PATH"
@@ -20,7 +20,7 @@ if [ ! -f "$DMG_PATH" ]; then
 fi
 
 SHA=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
-CASK="$TAP_DIR/Casks/outworked.rb"
+CASK="$TAP_DIR/Casks/papertrail.rb"
 
 if [ ! -f "$CASK" ]; then
   echo "Cask file not found at $CASK"

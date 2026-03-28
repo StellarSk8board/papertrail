@@ -19,7 +19,9 @@ function getAPI(): {
 
 // ─── localStorage fallback keys ───────────────────────────────────
 
-const LS_PREFIX = "outworked_session_";
+// Note: migrateSettingKeys() in settings.ts renames any "outworked_session_*"
+// keys already written under the old prefix when the app first launches.
+const LS_PREFIX = "papertrail_session_";
 
 function lsKey(agentId: string, sessionId: string) {
   return `${LS_PREFIX}${agentId}_${sessionId}`;

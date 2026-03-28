@@ -246,10 +246,10 @@ async function startSession(reqId, options, callbacks) {
         );
 
       // Auto-approve our own MCP server tools — they run locally and are trusted
-      if (toolName.startsWith("mcp__outworked-skills__")) {
+      if (toolName.startsWith("mcp__papertrail-skills__")) {
         verbose &&
           console.log(
-            `[sdk-bridge] Auto-approved (outworked MCP): ${toolName}`,
+            `[sdk-bridge] Auto-approved (papertrail MCP): ${toolName}`,
           );
         return {
           behavior: "allow",

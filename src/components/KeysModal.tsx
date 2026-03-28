@@ -18,9 +18,9 @@ export default function KeysModal({ keys, onSave, onClose }: KeysModalProps) {
   });
 
   function handleSave() {
-    setSetting("outworked_key_openai", draft.openai);
-    setSetting("outworked_key_anthropic", draft.anthropic);
-    setSetting("outworked_key_gemini", draft.gemini);
+    setSetting("papertrail_key_openai", draft.openai);
+    setSetting("papertrail_key_anthropic", draft.anthropic);
+    setSetting("papertrail_key_gemini", draft.gemini);
     onSave(draft);
     onClose();
   }

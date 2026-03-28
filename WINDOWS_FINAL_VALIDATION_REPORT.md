@@ -1,4 +1,4 @@
-# Windows Final Validation Report — Outworked Windows Port
+# Windows Final Validation Report — PaperTrail Windows Port
 
 **App version:** 0.3.0
 **Date:** 2026-03-27
@@ -10,7 +10,7 @@ This document is about the Windows port effort, not the original macOS-only rele
 
 ## 1. Executive Summary
 
-Outworked v0.3.0 has been ported to Windows through six structured implementation phases plus a hardening pass (Phase C). All critical and high-severity blockers from the initial audit have been resolved. The app is architecturally sound on Windows and can be distributed to beta testers on Windows 10/11 x64.
+PaperTrail v0.3.0 has been ported to Windows through six structured implementation phases plus a hardening pass (Phase C). All critical and high-severity blockers from the initial audit have been resolved. The app is architecturally sound on Windows and can be distributed to beta testers on Windows 10/11 x64.
 
 The verdict is **LIMITED BETA** (not full production) because:
 - NSIS installer and native module rebuild have not been verified on a real Windows machine (static audit only)
@@ -87,7 +87,7 @@ The verdict is **LIMITED BETA** (not full production) because:
 |-----|----------|-------------------|--------|
 | Code signing not configured | MEDIUM | YES | Expected for beta; SmartScreen is dismissible |
 | `npm run version` requires bash | LOW | YES | Developer-only tooling |
-| No `%APPDATA%` storage convention | LOW | YES | `.outworked` hidden dir works on Windows |
+| No `%APPDATA%` storage convention | LOW | YES | `.papertrail` hidden dir works on Windows |
 | NSIS installer not verified on real hardware | MEDIUM | YES | Requires manual smoke test before GA |
 | `better-sqlite3` not tested on Windows without Build Tools | MEDIUM | YES | Pre-built binaries available via electron-builder |
 | No Windows-specific CLI install path in onboarding | LOW | YES | Claude CLI installer handles PATH |

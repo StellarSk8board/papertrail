@@ -1,7 +1,7 @@
-# Windows MVP Plan — Outworked
+# Windows MVP Plan — PaperTrail
 
 **Date:** 2026-03-27
-**Goal:** A working, installable Windows build of Outworked that covers all core functionality except iMessage.
+**Goal:** A working, installable Windows build of PaperTrail that covers all core functionality except iMessage.
 
 ---
 

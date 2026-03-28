@@ -1,4 +1,4 @@
-# Windows Production Readiness — Outworked
+# Windows Production Readiness — PaperTrail
 
 **App version:** 0.3.0
 **Assessment date:** 2026-03-27
@@ -60,7 +60,7 @@
 | Item | Status | Evidence |
 |------|--------|----------|
 | `better-sqlite3` uses `os.homedir()` for DB path | ✅ DONE | `electron/db/database.js` |
-| `~/.outworked/` storage convention works on Windows | ✅ DONE | Windows supports dotfiles |
+| `~/.papertrail/` storage convention works on Windows | ✅ DONE | Windows supports dotfiles |
 | `cloudflared.exe` (not `cloudflared`) used on Windows | ✅ DONE | `mcp-server.js` conditional binary name |
 
 ### 1.6 Outstanding Gaps (Non-Blocking)
@@ -70,7 +70,7 @@
 | Code signing not configured | MEDIUM | SmartScreen warning on first run; acceptable for beta |
 | `npm run version` requires bash | LOW | Developer-only; use Git Bash as workaround |
 | No Windows-specific Claude CLI install path guidance in onboarding | LOW | Claude CLI installer handles PATH |
-| App data in `~/.outworked` vs `%APPDATA%` | LOW | UX deviation, not a bug |
+| App data in `~/.papertrail` vs `%APPDATA%` | LOW | UX deviation, not a bug |
 
 ---
 
@@ -98,14 +98,14 @@
 
 ## 3. Pre-Ship Checklist
 
-Before declaring Outworked Windows ready for production/beta distribution:
+Before declaring PaperTrail Windows ready for production/beta distribution:
 
 - [ ] Run all P0 smoke tests from `WINDOWS_SMOKE_TESTS.md` on a real Windows 10/11 machine
 - [ ] Run `npm run electron:build` and install the produced NSIS installer on a clean Windows VM
 - [ ] Verify icon renders correctly in taskbar, Start Menu, and file explorer
 - [ ] Verify SmartScreen warning appears but is dismissible (expected without code signing)
 - [ ] Verify no `claude.exe` zombie processes after session kill
-- [ ] Verify `%USERPROFILE%\.outworked\outworked.db` is created on first run
+- [ ] Verify `%USERPROFILE%\.papertrail\papertrail.db` is created on first run
 - [ ] Verify onboarding shows Slack-only channels copy (no iMessage)
 - [ ] Review `WINDOWS_KNOWN_ISSUES.md` and confirm all items are understood and accepted
 

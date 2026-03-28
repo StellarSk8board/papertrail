@@ -314,7 +314,10 @@ async function authenticateRuntime(name, credentials) {
 // ── OAuth app credential storage ────────────────────────────────
 
 const os = require("os");
-const OAUTH_CREDS_DIR = path.join(os.homedir(), ".outworked");
+// OAuth credentials live in the same app storage directory as the database.
+// database.js migrates ~/.outworked → ~/.papertrail on first run, so this
+// path will contain the existing credentials for upgrading users.
+const OAUTH_CREDS_DIR = path.join(os.homedir(), ".papertrail");
 const OAUTH_CREDS_FILE = path.join(OAUTH_CREDS_DIR, "oauth-apps.json");
 
 function loadAllOAuthAppCredentials() {

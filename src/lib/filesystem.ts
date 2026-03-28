@@ -227,7 +227,7 @@ export async function searchFiles(
 
 // ─── Browser fallback (localStorage) ──────────────────────────────
 
-const STORAGE_KEY = "outworked_files";
+const STORAGE_KEY = "papertrail_files";
 
 function fallbackLoad(): Map<string, FileEntry> {
   try {

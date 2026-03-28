@@ -1174,7 +1174,7 @@ export default function ChatWindow({
 
       // ── Step 2: Create new agents if needed ──
       const newAgents: Agent[] = [];
-      const wsDir = (await getSetting("outworked_workspace_dir")) || undefined;
+      const wsDir = (await getSetting("papertrail_workspace_dir")) || undefined;
       for (const spec of result.newAgents) {
         if (
           employees.find(

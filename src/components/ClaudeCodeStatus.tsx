@@ -22,10 +22,10 @@ export interface GlobalSessionDefaults {
 }
 
 const SETTINGS_KEYS = {
-  model: "outworked_default_model",
-  thinking: "outworked_default_thinking",
-  thinkingBudget: "outworked_default_thinking_budget",
-  effort: "outworked_default_effort",
+  model: "papertrail_default_model",
+  thinking: "papertrail_default_thinking",
+  thinkingBudget: "papertrail_default_thinking_budget",
+  effort: "papertrail_default_effort",
 } as const;
 
 export async function loadGlobalDefaults(): Promise<GlobalSessionDefaults> {

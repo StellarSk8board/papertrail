@@ -85,7 +85,9 @@ const MCP_PRESETS: McpPreset[] = [
 
 // ─── System servers (always present, non-removable) ──────────
 
-const SYSTEM_SERVERS = ["outworked-skills"];
+// "outworked-skills" kept here so legacy entries in user settings are also
+// treated as non-removable system servers during the transition period.
+const SYSTEM_SERVERS = ["papertrail-skills", "outworked-skills"];
 
 // ─── Helpers ──────────────────────────────────────────────────
 

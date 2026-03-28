@@ -10,12 +10,12 @@ VERSION=$(node -p "require('./package.json').version")
 # README.md — update generic release tag references
 sed -i '' \
   -e "s|releases/tag/v[0-9]*\.[0-9]*\.[0-9]*|releases/tag/v${VERSION}|g" \
-  -e "s|releases/download/v[0-9]*\.[0-9]*\.[0-9]*/Outworked-[0-9]*\.[0-9]*\.[0-9]*|releases/download/v${VERSION}/Outworked-${VERSION}|g" \
+  -e "s|releases/download/v[0-9]*\.[0-9]*\.[0-9]*/PaperTrail-[0-9]*\.[0-9]*\.[0-9]*|releases/download/v${VERSION}/PaperTrail-${VERSION}|g" \
   README.md
 
 # RELEASE_TEMPLATE.md — update version in download links and filenames
 sed -i '' \
-  -e "s|Outworked-[0-9]*\.[0-9]*\.[0-9]*|Outworked-${VERSION}|g" \
+  -e "s|PaperTrail-[0-9]*\.[0-9]*\.[0-9]*|PaperTrail-${VERSION}|g" \
   -e "s|download/v[0-9]*\.[0-9]*\.[0-9]*|download/v${VERSION}|g" \
   .github/RELEASE_TEMPLATE.md
 

@@ -175,7 +175,7 @@ export interface Agent {
   subagentDef?: SubagentDef; // parsed subagent definition
   agentScope?: AgentScope; // 'user' (~/.claude/agents/) or 'project' (.claude/agents/)
   sessionId?: string; // Claude Code session ID for continuity
-  currentSessionId?: string; // active Outworked session ID (for persistence)
+  currentSessionId?: string; // active PaperTrail session ID (for persistence)
   collaboratingWith?: string; // id of agent being consulted (ephemeral, drives walk animation)
   autoCreated?: boolean; // true if created automatically by the orchestrator
   // Ephemeral streaming state — allows viewing an agent's live work from any tab

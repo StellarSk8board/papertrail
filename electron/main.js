@@ -16,9 +16,12 @@ const crypto = require("crypto");
 const { autoUpdater } = require("electron-updater");
 const sdkBridge = require("./sdk-bridge");
 const { IS_WIN, HOME } = require("./platform");
+// Require database early so the ~/.outworked → ~/.papertrail storage
+// migration runs before any IPC handler tries to access those paths.
+require("./db/database");
 
-// Set the app name early so macOS notifications show "Outworked" instead of "Electron"
-app.setName("Outworked");
+// Set the app name early so macOS notifications show "PaperTrail" instead of "Electron"
+app.setName("PaperTrail");
 
 const verbose = process.env.VERBOSE_LOGGING === "true";
 let mainWindow = null;
@@ -60,7 +63,7 @@ function openPreviewWindow(rawUrl) {
   previewWindow = new BrowserWindow({
     width: 1024,
     height: 768,
-    title: "Outworked — Preview",
+    title: "PaperTrail — Preview",
     backgroundColor: "#ffffff",
     webPreferences: {
       contextIsolation: true,
@@ -1041,7 +1044,7 @@ app.on("before-quit", () => {
 });
 
 // ─── Filesystem IPC ───────────────────────────────────────────────
-let workspaceDir = path.join(HOME, "outworked-workspace");
+let workspaceDir = path.join(HOME, "papertrail-workspace");
 
 function ensureDir(dirPath) {
   ensureDirWritable(dirPath);
@@ -2111,7 +2114,7 @@ function setupMusicIPC() {
 
 // ─── Session persistence ──────────────────────────────────────────
 const os = require("os");
-const SESSIONS_DIR = path.join(os.homedir(), ".outworked", "sessions");
+const SESSIONS_DIR = path.join(os.homedir(), ".papertrail", "sessions");
 
 /**
  * Sanitize a session/agent ID to prevent path traversal.
@@ -2415,7 +2418,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    title: "Outworked — AI Agent HQ",
+    title: "PaperTrail — AI Agent HQ",
     icon: iconPath,
     backgroundColor: "#0d0d1a",
     webPreferences: {
@@ -2560,20 +2563,29 @@ app.whenReady().then(() => {
   mcpServer.setSkillManager(skillManager);
   mcpServer.start();
 
-  // Clean up any stale outworked-skills entry from Claude Code's settings.json.
-  // MCP is now injected per-session via SDK options as an HTTP server.
+  // Remove any stale MCP server entries from Claude Code's settings.json.
+  // MCP is injected per-session via SDK options; static entries cause conflicts.
+  // "outworked-skills" is the legacy name used before the rename to PaperTrail —
+  // we clean it up so upgrading users don't have an orphan entry.
   try {
     const home = HOME;
     const settingsPath = path.join(home, ".claude", "settings.json");
     if (fs.existsSync(settingsPath)) {
       const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-      if (settings.mcpServers && settings.mcpServers["outworked-skills"]) {
-        delete settings.mcpServers["outworked-skills"];
+      let changed = false;
+      // Remove both old (outworked-skills) and new (papertrail-skills) static entries
+      for (const staleKey of ["outworked-skills", "papertrail-skills"]) {
+        if (settings.mcpServers && settings.mcpServers[staleKey]) {
+          delete settings.mcpServers[staleKey];
+          changed = true;
+          console.log(`[mcp] Removed stale ${staleKey} from settings.json`);
+        }
+      }
+      if (changed) {
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), {
           encoding: "utf-8",
           mode: FILE_MODE,
         });
-        console.log("[mcp] Removed stale outworked-skills from settings.json");
       }
     }
   } catch (err) {

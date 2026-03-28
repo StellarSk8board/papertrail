@@ -171,7 +171,7 @@ function startCallbackServer(expectedState) {
       }
 
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(successPage(true, 'You can close this tab and return to Outworked.'));
+      res.end(successPage(true, 'You can close this tab and return to PaperTrail.'));
       resolveCode(code);
     });
 
@@ -189,7 +189,7 @@ function successPage(ok, message) {
   const icon = ok ? '&#10003;' : '&#10007;';
   const title = ok ? 'Connected!' : 'Error';
   return `<!DOCTYPE html>
-<html><head><title>Outworked — ${title}</title>
+<html><head><title>PaperTrail — ${title}</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #0f0f23; color: #e0e0e0;
     display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }

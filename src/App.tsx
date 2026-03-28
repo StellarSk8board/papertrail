@@ -64,6 +64,7 @@ import {
   setSetting,
   getSettingJSON,
   setSettingJSON,
+  migrateSettingKeys,
 } from "./lib/settings";
 import {
   playTaskComplete,
@@ -173,6 +174,10 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
+      // Migrate any "outworked_*" setting keys to "papertrail_*" before reading.
+      // This is a no-op for new installs and runs once for upgrading users.
+      await migrateSettingKeys();
+
       // Load persisted settings from SQLite
       const [
         savedWs,
@@ -183,16 +188,16 @@ export default function App() {
         savedFurniture,
         savedAutoApprove,
       ] = await Promise.all([
-        getSetting("outworked_workspace_dir"),
-        getSetting("outworked_agent_teams"),
-        getSetting("outworked_permission_prompts"),
-        getSetting("outworked_debug"),
-        getSetting("outworked_onboarding_done"),
+        getSetting("papertrail_workspace_dir"),
+        getSetting("papertrail_agent_teams"),
+        getSetting("papertrail_permission_prompts"),
+        getSetting("papertrail_debug"),
+        getSetting("papertrail_onboarding_done"),
         getSettingJSON<import("./phaser/OfficeScene").FurnitureItem[] | null>(
-          "outworked_furniture_layout",
+          "papertrail_furniture_layout",
           null,
         ),
-        getSetting("outworked_auto_approve_all"),
+        getSetting("papertrail_auto_approve_all"),
       ]);
       setAgentTeamsEnabled(savedTeams === "1");
       setPermissionPromptsEnabled(savedPerms !== "0");
@@ -242,12 +247,16 @@ export default function App() {
         }
       }
 
-      // Migrate any existing in-memory history to sessions (one-time)
-      const migrated = await getSetting("outworked_sessions_migrated");
+      // Migrate any existing in-memory history to sessions (one-time).
+      // Key was "outworked_sessions_migrated"; migrateSettingKeys() above
+      // already renamed it to "papertrail_sessions_migrated" if it existed.
+      const migrated = await getSetting("papertrail_sessions_migrated");
       if (!migrated) {
         const rawAgents = await (async () => {
           try {
-            const r = await getSetting("outworked_agents");
+            // Read from new key; migrateSettingKeys() will have renamed it if
+            // the user was on the old version.
+            const r = await getSetting("papertrail_agents");
             return r ? JSON.parse(r) : [];
           } catch {
             return [];
@@ -275,7 +284,7 @@ export default function App() {
             }
           }
         }
-        await setSetting("outworked_sessions_migrated", "1");
+        await setSetting("papertrail_sessions_migrated", "1");
       }
 
       setStartupDone(true);
@@ -298,7 +307,7 @@ export default function App() {
   // Auto-reload when Claude Code agent files change on disk
   useEffect(() => {
     const unsub = onClaudeAgentsChanged(async () => {
-      const wsDir = (await getSetting("outworked_workspace_dir")) || undefined;
+      const wsDir = (await getSetting("papertrail_workspace_dir")) || undefined;
       const fresh = await loadAgentsFromDisk(wsDir);
       setAgents((prev) => mergeRuntimeState(prev, fresh));
     });
@@ -499,7 +508,7 @@ export default function App() {
 
   const handleFurnitureMove = useCallback(
     (items: import("./phaser/OfficeScene").FurnitureItem[]) => {
-      setSettingJSON("outworked_furniture_layout", items);
+      setSettingJSON("papertrail_furniture_layout", items);
     },
     [],
   );
@@ -561,9 +570,9 @@ export default function App() {
         if (result) {
           const parsed = parseSubagentFrontmatter(result.content);
           const name =
-            parsed.def["outworked-name"] || parsed.def.name || agent.name;
+            parsed.def["papertrail-name"] || parsed.def["outworked-name"] || parsed.def.name || agent.name;
           const role =
-            parsed.def["outworked-role"] ||
+            parsed.def["papertrail-role"] || parsed.def["outworked-role"] ||
             parsed.def.description ||
             agent.role;
 
@@ -578,7 +587,7 @@ export default function App() {
             currentThought: "",
           };
 
-          // Re-write the file with the correct outworked-id and metadata
+          // Re-write the file with the correct papertrail-id and metadata
           await saveAgentToDisk(updatedAgent, workspaceDir || undefined);
           updateAgent(updatedAgent);
         } else {
@@ -630,7 +639,7 @@ export default function App() {
       if (!agent) return prev;
       const saved = { ...agent, autoCreated: false };
       const next = prev.map((a) => (a.id === agentId ? saved : a));
-      // Rewrite the .md file without the outworked-auto-created flag
+      // Rewrite the .md file without the papertrail-auto-created flag
       saveAgentToDisk(saved, workspaceDirRef.current || undefined);
       return next;
     });
@@ -644,7 +653,7 @@ export default function App() {
   const toggleDebug = useCallback(() => {
     setDebugMode((prev) => {
       const next = !prev;
-      setSetting("outworked_debug", next ? "1" : "0");
+      setSetting("papertrail_debug", next ? "1" : "0");
       return next;
     });
   }, []);
@@ -789,7 +798,7 @@ export default function App() {
   async function handleWorkspaceSelected(dir: string) {
     setWorkspaceDir(dir);
     workspaceDirRef.current = dir;
-    setSetting("outworked_workspace_dir", dir);
+    setSetting("papertrail_workspace_dir", dir);
     await setWorkspace(dir);
     watchProjectAgents(dir);
     setShowWorkspacePicker(false);
@@ -824,7 +833,7 @@ export default function App() {
       </div>
       <aside className="w-56 shrink-0 border-r border-slate-700 flex flex-col bg-slate-900/95">
         <div className="px-3 py-3 border-b border-gray-800">
-          <h1 className="text-xs font-pixel text-indigo-300">Outworked</h1>
+          <h1 className="text-xs font-pixel text-indigo-300">PaperTrail</h1>
           <p className="text-[10px] font-pixel text-slate-400 mt-1">
             AI Agent HQ
           </p>
@@ -865,7 +874,7 @@ export default function App() {
             onClick={() => {
               const next = !agentTeamsEnabled;
               setAgentTeamsEnabled(next);
-              setSetting("outworked_agent_teams", next ? "1" : "0");
+              setSetting("papertrail_agent_teams", next ? "1" : "0");
             }}
             className={`w-full btn-pixel text-[10px] ${agentTeamsEnabled ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-50" : "bg-slate-700 hover:bg-slate-600 text-slate-200"}`}
           >
@@ -875,7 +884,7 @@ export default function App() {
             onClick={() => {
               const next = !permissionPromptsEnabled;
               setPermissionPromptsEnabled(next);
-              setSetting("outworked_permission_prompts", next ? "1" : "0");
+              setSetting("papertrail_permission_prompts", next ? "1" : "0");
             }}
             className={`w-full btn-pixel text-[10px] ${!permissionPromptsEnabled ? "bg-amber-700 hover:bg-amber-600 text-amber-50" : "bg-slate-700 hover:bg-slate-600 text-slate-200"}`}
           >
@@ -885,7 +894,7 @@ export default function App() {
             onClick={() => {
               const next = !autoApproveAll;
               setAutoApproveAll(next);
-              setSetting("outworked_auto_approve_all", next ? "1" : "0");
+              setSetting("papertrail_auto_approve_all", next ? "1" : "0");
             }}
             className={`w-full btn-pixel text-[10px] ${autoApproveAll ? "bg-amber-700 hover:bg-amber-600 text-amber-50" : "bg-slate-700 hover:bg-slate-600 text-slate-200"}`}
           >
@@ -1352,7 +1361,7 @@ export default function App() {
       {showOnboarding && startupDone && (
         <OnboardingModal
           onComplete={async () => {
-            setSetting("outworked_onboarding_done", "1");
+            setSetting("papertrail_onboarding_done", "1");
             // Seed browser & scheduler as default global skills on first launch
             const existing = await loadGlobalSkillIds();
             if (existing.length === 0) {

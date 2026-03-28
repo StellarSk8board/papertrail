@@ -14,12 +14,12 @@ import { loadGlobalSkillIds } from "./storage";
 async function buildThinkingConfig(
   subDef?: SubagentDef,
 ): Promise<ClaudeCodeAdvancedOptions["thinking"]> {
-  const thinking = subDef?.thinking || (await getSetting("outworked_default_thinking")) || "adaptive";
+  const thinking = subDef?.thinking || (await getSetting("papertrail_default_thinking")) || "adaptive";
   if (thinking === "adaptive") return undefined;
   if (thinking === "disabled") return { type: "disabled" };
   // "enabled" with optional budget
   const budget = subDef?.thinkingBudget
-    || parseInt((await getSetting("outworked_default_thinking_budget")) || "0")
+    || parseInt((await getSetting("papertrail_default_thinking_budget")) || "0")
     || 0;
   return budget
     ? { type: "enabled", budgetTokens: budget }
@@ -238,10 +238,12 @@ async function invokeClaudeCode(opts: InvokeOptions): Promise<SendMessageResult>
   const workspace = await getWorkspace();
 
   // Build MCP servers list — include user-configured ones plus the always-running
-  // outworked-skills server. Skip MCP when tools are disabled (e.g. router calls).
+  // papertrail-skills server. Strip any static copies of our own server (both the
+  // new name and the legacy "outworked-skills" name) to avoid duplicate connections.
   let mcpServers = subDef?.mcpServers
     ? subDef.mcpServers.filter(
-        (s) => !(typeof s === "object" && s !== null && "outworked-skills" in s),
+        (s) => !(typeof s === "object" && s !== null &&
+          ("papertrail-skills" in s || "outworked-skills" in s)),
       )
     : [];
   if (useTools) {
@@ -252,7 +254,7 @@ async function invokeClaudeCode(opts: InvokeOptions): Promise<SendMessageResult>
     }
     const qs = qsParts.length > 0 ? `?${qsParts.join("&")}` : "";
     mcpServers.push({
-      "outworked-skills": {
+      "papertrail-skills": {
         type: "http" as const,
         url: `http://127.0.0.1:7823/mcp${qs}`,
       },
@@ -263,7 +265,7 @@ async function invokeClaudeCode(opts: InvokeOptions): Promise<SendMessageResult>
   // Claude Code prefixes MCP tools with "mcp__<serverName>__<toolName>".
   let allowedTools = subDef?.tools ? [...subDef.tools] : undefined;
   if (allowedTools) {
-    const mcpToolPattern = "mcp__outworked-skills__*";
+    const mcpToolPattern = "mcp__papertrail-skills__*";
     if (!allowedTools.includes(mcpToolPattern)) {
       allowedTools.push(mcpToolPattern);
     }
@@ -275,19 +277,19 @@ async function invokeClaudeCode(opts: InvokeOptions): Promise<SendMessageResult>
     // Skip system prompt on resumed sessions — Claude Code already has it
     // from the initial session. Re-sending it wastes input tokens.
     ...(isResume ? {} : { systemPrompt }),
-    model: subDef?.model || (await getSetting("outworked_default_model")) || undefined,
+    model: subDef?.model || (await getSetting("papertrail_default_model")) || undefined,
     // When useTools is false (e.g. router/planning calls), block all tools,
     // force maxTurns: 1, use low effort, and don't persist the session.
     allowedTools: useTools ? allowedTools : [],
     disallowedTools: useTools ? subDef?.disallowedTools : undefined,
     maxTurns: useTools ? subDef?.maxTurns : 1,
     effort: useTools
-      ? (subDef?.effort || (await getSetting("outworked_default_effort")) as ClaudeCodeAdvancedOptions["effort"] || undefined)
+      ? (subDef?.effort || (await getSetting("papertrail_default_effort")) as ClaudeCodeAdvancedOptions["effort"] || undefined)
       : "low",
     persistSession: useTools ? undefined : false,
     permissionMode:
       (subDef?.permissionMode as ClaudeCodeAdvancedOptions["permissionMode"]) ||
-      ((await getSetting("outworked_permission_prompts")) !== "0"
+      ((await getSetting("papertrail_permission_prompts")) !== "0"
         ? "default"
         : "acceptEdits"),
     mcpServers: mcpServers.length > 0 ? mcpServers : undefined,

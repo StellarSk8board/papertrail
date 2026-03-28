@@ -16,10 +16,10 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { getSetting, setSetting, getSettingJSON, setSettingJSON } from "./settings";
 
-const SKILLS_KEY = "outworked_skills";
-const GLOBAL_SKILLS_KEY = "outworked_global_skills";
+const SKILLS_KEY = "papertrail_skills";
+const GLOBAL_SKILLS_KEY = "papertrail_global_skills";
 
-/** Parse outworked-skills JSON from frontmatter back into AgentSkill[] */
+/** Parse papertrail-skills JSON from frontmatter back into AgentSkill[] */
 function parseOutworkedSkills(raw: unknown): AgentSkill[] {
   if (!raw) return [];
   try {
@@ -104,7 +104,7 @@ export function resetProject(agents: Agent[]): Agent[] {
 
 /**
  * Build the markdown content for a Claude Code agent .md file.
- * Takes the full Agent object and generates all outworked-* frontmatter fields.
+ * Takes the full Agent object and generates all papertrail-* frontmatter fields.
  */
 export function buildSubagentMd(agent: Agent, slug: string): string {
   const def: SubagentDef = agent.subagentDef || {
@@ -114,15 +114,17 @@ export function buildSubagentMd(agent: Agent, slug: string): string {
 
   let fm = "---\n";
 
-  // Outworked metadata fields
-  fm += `outworked-id: ${agent.id}\n`;
-  fm += `outworked-name: ${agent.name}\n`;
-  fm += `outworked-role: ${agent.role}\n`;
-  fm += `outworked-position: ${agent.position.x},${agent.position.y}\n`;
-  fm += `outworked-sprite: ${agent.spriteKey}\n`;
-  fm += `outworked-color: ${agent.color}\n`;
-  if (agent.autoCreated) fm += `outworked-auto-created: true\n`;
-  if (agent.isBoss) fm += `outworked-boss: true\n`;
+  // PaperTrail metadata fields (renamed from outworked-* in v0.4+).
+  // Old agent .md files with outworked-* keys are still readable — see
+  // parseSubagentFrontmatter() which accepts both prefixes for compatibility.
+  fm += `papertrail-id: ${agent.id}\n`;
+  fm += `papertrail-name: ${agent.name}\n`;
+  fm += `papertrail-role: ${agent.role}\n`;
+  fm += `papertrail-position: ${agent.position.x},${agent.position.y}\n`;
+  fm += `papertrail-sprite: ${agent.spriteKey}\n`;
+  fm += `papertrail-color: ${agent.color}\n`;
+  if (agent.autoCreated) fm += `papertrail-auto-created: true\n`;
+  if (agent.isBoss) fm += `papertrail-boss: true\n`;
   if (agent.skills && agent.skills.length > 0) {
     const skillRefs = agent.skills.map((s) => ({
       id: s.id,
@@ -130,7 +132,7 @@ export function buildSubagentMd(agent: Agent, slug: string): string {
       description: s.description || "",
       content: s.content,
     }));
-    fm += `outworked-skills: ${JSON.stringify(skillRefs)}\n`;
+    fm += `papertrail-skills: ${JSON.stringify(skillRefs)}\n`;
   }
 
   // Claude Code fields from subagentDef
@@ -266,8 +268,8 @@ export async function generateAgentWithAI(
 
 The file MUST follow this exact format:
 ---
-outworked-name: <Display Name for the office UI>
-outworked-role: <Short role title, e.g. "Frontend Developer", "QA Engineer">
+papertrail-name: <Display Name for the office UI>
+papertrail-role: <Short role title, e.g. "Frontend Developer", "QA Engineer">
 name: <kebab-case-slug>
 description: "<1-2 sentence description of when to delegate to this agent, used by Claude Code for routing>"
 model: sonnet
@@ -276,8 +278,8 @@ model: sonnet
 <Detailed system prompt that defines the agent's expertise, responsibilities, and operational approach. Be thorough — include specific domain knowledge, methodologies, and behavioral guidelines. Use markdown formatting with headers and bullet points.>
 
 Rules:
-- outworked-name should be a human first name that fits the role
-- outworked-role is a short job title (2-4 words)
+- papertrail-name should be a human first name that fits the role
+- papertrail-role is a short job title (2-4 words)
 - name is a kebab-case slug derived from the role
 - description is for Claude Code delegation routing — explain WHEN and WHY to use this agent
 - The body should be 200-500 words of detailed expertise and instructions
@@ -380,6 +382,19 @@ export function parseSubagentFrontmatter(content: string): {
   def: Partial<SubagentDef> & {
     name?: string;
     description?: string;
+    // New keys (papertrail-*) take precedence; old keys (outworked-*) are
+    // read as a fallback so existing agent .md files keep working until
+    // they are re-saved by buildSubagentMd() which writes the new keys.
+    "papertrail-id"?: string;
+    "papertrail-name"?: string;
+    "papertrail-role"?: string;
+    "papertrail-position"?: string;
+    "papertrail-sprite"?: string;
+    "papertrail-color"?: string;
+    "papertrail-auto-created"?: boolean;
+    "papertrail-boss"?: boolean;
+    "papertrail-skills"?: unknown;
+    // Legacy aliases — populated from outworked-* if papertrail-* absent
     "outworked-id"?: string;
     "outworked-name"?: string;
     "outworked-role"?: string;
@@ -488,6 +503,26 @@ export function parseSubagentFrontmatter(content: string): {
       thinking: raw.thinking as SubagentDef["thinking"] | undefined,
       thinkingBudget: typeof raw.thinkingBudget === "number" ? raw.thinkingBudget : undefined,
       effort: raw.effort as SubagentDef["effort"] | undefined,
+      // New papertrail-* keys (written by buildSubagentMd in v0.4+)
+      "papertrail-id": raw["papertrail-id"] as string | undefined,
+      "papertrail-name": raw["papertrail-name"] as string | undefined,
+      "papertrail-role": raw["papertrail-role"] as string | undefined,
+      "papertrail-position": raw["papertrail-position"] as string | undefined,
+      "papertrail-sprite": raw["papertrail-sprite"] as string | undefined,
+      "papertrail-color": raw["papertrail-color"] as string | undefined,
+      "papertrail-auto-created":
+        raw["papertrail-auto-created"] === true ||
+        raw["papertrail-auto-created"] === "true"
+          ? true
+          : undefined,
+      "papertrail-boss":
+        raw["papertrail-boss"] === true || raw["papertrail-boss"] === "true"
+          ? true
+          : undefined,
+      "papertrail-skills": raw["papertrail-skills"],
+      // Legacy outworked-* keys — kept for backward compatibility with agent
+      // .md files written before the rename.  Callers (loadAgentsFromDisk)
+      // prefer the papertrail-* value and fall back to outworked-* if absent.
       "outworked-id": raw["outworked-id"] as string | undefined,
       "outworked-name": raw["outworked-name"] as string | undefined,
       "outworked-role": raw["outworked-role"] as string | undefined,
@@ -712,29 +747,32 @@ export async function loadAgentsFromDisk(
   }
 
   const agents: Agent[] = [];
-  // Track which files were missing outworked-id so we can rewrite them
+  // Track which files need rewriting (missing id OR still using legacy outworked-* keys)
   const filesToRewrite: { agent: Agent; slug: string; filePath: string }[] = [];
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const { def, body } = parseSubagentFrontmatter(file.content);
 
-    // Resolve outworked display fields
+    // Resolve display fields — prefer papertrail-* keys, fall back to outworked-*
+    // for agent .md files that haven't been re-saved since the rename.
     const name =
-      def["outworked-name"] || def.name || file.file.replace(/\.md$/, "");
+      def["papertrail-name"] || def["outworked-name"] || def.name || file.file.replace(/\.md$/, "");
     const role =
-      def["outworked-role"] || def.description || "Claude Code Subagent";
+      def["papertrail-role"] || def["outworked-role"] || def.description || "Claude Code Subagent";
     const personality = body || `You are ${name}. ${role}`;
-    const isBoss = !!def["outworked-boss"];
-    const autoCreated = !!def["outworked-auto-created"];
+    const isBoss = !!(def["papertrail-boss"] || def["outworked-boss"]);
+    const autoCreated = !!(def["papertrail-auto-created"] || def["outworked-auto-created"]);
 
-    // Resolve id — generate one if missing
-    const hadId = !!def["outworked-id"];
-    const id = def["outworked-id"] || uuidv4();
+    // Resolve id — prefer papertrail-id, fall back to outworked-id, generate if missing
+    const hadId = !!(def["papertrail-id"] || def["outworked-id"]);
+    const id = def["papertrail-id"] || def["outworked-id"] || uuidv4();
+    // Flag files that still use the old outworked-* prefix so they get rewritten
+    const needsKeyMigration = !def["papertrail-id"] && !!def["outworked-id"];
 
     // Resolve position
     let position: { x: number; y: number };
-    const posStr = def["outworked-position"];
+    const posStr = def["papertrail-position"] || def["outworked-position"];
     if (posStr && /^\d+,\d+$/.test(posStr)) {
       const [px, py] = posStr.split(",").map(Number);
       position = { x: px, y: py };
@@ -747,8 +785,8 @@ export async function loadAgentsFromDisk(
 
     // Resolve sprite and color — use index as fallback
     const idx = i % SPRITE_KEYS.length;
-    const spriteKey = def["outworked-sprite"] || SPRITE_KEYS[idx];
-    const color = def["outworked-color"] || AGENT_COLORS[idx];
+    const spriteKey = def["papertrail-sprite"] || def["outworked-sprite"] || SPRITE_KEYS[idx];
+    const color = def["papertrail-color"] || def["outworked-color"] || AGENT_COLORS[idx];
 
     // Build subagentDef
     const subagentDef: SubagentDef = {
@@ -775,7 +813,7 @@ export async function loadAgentsFromDisk(
       personality,
       model: "claude-code",
       provider: "claude-code",
-      skills: parseOutworkedSkills(def["outworked-skills"]),
+      skills: parseOutworkedSkills(def["papertrail-skills"] ?? def["outworked-skills"]),
       position,
       spriteKey,
       color,
@@ -793,14 +831,15 @@ export async function loadAgentsFromDisk(
 
     agents.push(agent);
 
-    // Queue file rewrite if it was missing outworked-id
-    if (!hadId) {
+    // Queue file rewrite if it was missing an id OR still using the legacy
+    // outworked-* frontmatter prefix (upgrades it to papertrail-* on next save).
+    if (!hadId || needsKeyMigration) {
       const slug = def.name || file.file.replace(/\.md$/, "");
       filesToRewrite.push({ agent, slug, filePath: file.path });
     }
   }
 
-  // Rewrite files that were missing outworked-id
+  // Rewrite files that were missing an id or still used the legacy outworked-* prefix
   for (const { agent, slug, filePath } of filesToRewrite) {
     const content = buildSubagentMd(agent, slug);
     await writeClaudeAgentFile(filePath, content);
@@ -871,7 +910,10 @@ export async function migrateLocalStorageAgents(
 ): Promise<boolean> {
   if (typeof window === "undefined") return false;
 
-  const raw = localStorage.getItem("outworked_agents");
+  // Check new key first; fall back to old key for users upgrading from Outworked.
+  // migrateSettingKeys() renames outworked_agents → papertrail_agents before
+  // this runs, so normally the new key is the one that exists.
+  const raw = localStorage.getItem("papertrail_agents") ?? localStorage.getItem("outworked_agents");
   if (!raw) return false;
 
   let agents: Agent[];
@@ -879,6 +921,7 @@ export async function migrateLocalStorageAgents(
     agents = JSON.parse(raw) as Agent[];
   } catch {
     localStorage.removeItem("outworked_agents");
+    localStorage.removeItem("papertrail_agents");
     return false;
   }
 
@@ -889,7 +932,9 @@ export async function migrateLocalStorageAgents(
     }
   }
 
+  // Remove both key variants so the migration doesn't run again
   localStorage.removeItem("outworked_agents");
+  localStorage.removeItem("papertrail_agents");
   return true;
 }
 

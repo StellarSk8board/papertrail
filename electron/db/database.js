@@ -7,8 +7,101 @@ const os = require("os");
 const fs = require("fs");
 const verbose = process.env.VERBOSE_LOGGING === "true";
 
-const DB_DIR = path.join(os.homedir(), ".outworked");
-const DB_PATH = path.join(DB_DIR, "outworked.db");
+// ─── Storage directory paths ─────────────────────────────────────
+// New canonical location is ~/.papertrail (renamed from ~/.outworked).
+// The migration function below copies existing data on first run so
+// existing users don't lose their database, sessions, or OAuth tokens.
+const DB_DIR = path.join(os.homedir(), ".papertrail");
+const DB_PATH = path.join(DB_DIR, "papertrail.db");
+
+// Legacy paths — only used during one-time migration.
+// Keep these constants here so the migration logic is self-contained
+// and it's obvious where the old location was.
+const _LEGACY_DB_DIR = path.join(os.homedir(), ".outworked");
+const _LEGACY_DB_PATH = path.join(_LEGACY_DB_DIR, "outworked.db");
+
+/**
+ * One-time migration: copy ~/.outworked/* → ~/.papertrail/ on first run.
+ *
+ * Triggered when ~/.papertrail does not yet exist but ~/.outworked does,
+ * which is exactly the condition for an existing Outworked user upgrading
+ * to PaperTrail for the first time.
+ *
+ * What gets copied:
+ *   outworked.db   → papertrail.db  (the SQLite database, renamed)
+ *   sessions/      → sessions/      (Claude Code session replay files)
+ *   oauth-apps.json → oauth-apps.json (OAuth app credentials)
+ *   bin/           → bin/           (cloudflared binary)
+ *
+ * ~/.outworked is intentionally left in place after migration as a
+ * safety net — the user can delete it manually once they have verified
+ * the new installation works correctly.
+ *
+ * If migration fails for any reason, the error is logged and the app
+ * continues with a fresh ~/.papertrail directory.  No data is deleted
+ * from the old location, so the user can retry or recover manually.
+ */
+function migrateStorageDir() {
+  // Already migrated or fresh install — nothing to do.
+  if (fs.existsSync(DB_DIR)) return;
+  // No legacy data to migrate — fresh install.
+  if (!fs.existsSync(_LEGACY_DB_DIR)) return;
+
+  verbose && console.log(`[database] Migrating storage ${_LEGACY_DB_DIR} → ${DB_DIR}`);
+  try {
+    fs.mkdirSync(DB_DIR, { recursive: true, mode: 0o755 });
+
+    // Database file is renamed (outworked.db → papertrail.db)
+    if (fs.existsSync(_LEGACY_DB_PATH)) {
+      fs.copyFileSync(_LEGACY_DB_PATH, DB_PATH);
+      verbose && console.log("[database]  ✓ database copied");
+    }
+
+    // Copy sessions/ directory (Claude Code session replay JSON files)
+    const oldSessions = path.join(_LEGACY_DB_DIR, "sessions");
+    if (fs.existsSync(oldSessions)) {
+      _copyDirSync(oldSessions, path.join(DB_DIR, "sessions"));
+      verbose && console.log("[database]  ✓ sessions copied");
+    }
+
+    // Copy OAuth app credentials file
+    const oldOAuth = path.join(_LEGACY_DB_DIR, "oauth-apps.json");
+    if (fs.existsSync(oldOAuth)) {
+      fs.copyFileSync(oldOAuth, path.join(DB_DIR, "oauth-apps.json"));
+      verbose && console.log("[database]  ✓ oauth-apps.json copied");
+    }
+
+    // Copy cloudflared binary (used by the MCP tunnel feature)
+    const oldBin = path.join(_LEGACY_DB_DIR, "bin");
+    if (fs.existsSync(oldBin)) {
+      _copyDirSync(oldBin, path.join(DB_DIR, "bin"));
+      verbose && console.log("[database]  ✓ bin/ copied");
+    }
+
+    console.log(`[database] Storage migration complete. Legacy directory ~/.outworked preserved for safety.`);
+  } catch (err) {
+    console.error(`[database] Storage migration failed: ${err.message}. Starting fresh.`);
+    // Do not rethrow — app can start with an empty ~/.papertrail directory.
+  }
+}
+
+/** Recursively copy src directory to dest (both must be absolute paths). */
+function _copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true, mode: 0o755 });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      _copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// Run migration synchronously at module load time so DB_DIR and DB_PATH
+// are populated before the first call to getDb().
+migrateStorageDir();
 
 let _db = null;
 

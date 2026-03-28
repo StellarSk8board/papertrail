@@ -1,4 +1,4 @@
-# Windows Compatibility Matrix — Outworked
+# Windows Compatibility Matrix — PaperTrail
 
 **Legend:**
 - ✅ Works on Windows now — no changes needed
@@ -85,7 +85,7 @@
 | `fs.accessSync(path, X_OK)` | 🟡 Minor fix | `X_OK` check is meaningful on Unix; on Windows it checks file existence only. Works but doesn't truly verify executability |
 | `path.join(...)` for all paths | ✅ Works | Uses `path.join` throughout — correct |
 | `os.homedir()` | ✅ Works | Returns `C:\Users\<user>` on Windows |
-| `app.getPath("userData")` | ✅ Works | Not used (app uses `~/.outworked` directly) |
+| `app.getPath("userData")` | ✅ Works | Not used (app uses `~/.papertrail` directly) |
 | Workspace directory validation | ✅ Works | Uses `path.resolve` and `fs.statSync` |
 
 ---
@@ -95,9 +95,9 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | `better-sqlite3` native module | ✅ Fixed (Phase 4) | `npmRebuild: true` in electron-builder.yml; `asarUnpack: ["**/*.node"]` ensures binary is outside asar. Dev install still requires build tools (MSVC) for local `electron-rebuild`. |
-| `~/.outworked/outworked.db` path | ✅ Works | `os.homedir()` resolves correctly on Windows |
+| `~/.papertrail/papertrail.db` path | ✅ Works | `os.homedir()` resolves correctly on Windows |
 | WAL mode, all SQL operations | ✅ Works | SQLite is cross-platform |
-| Session JSON files under `~/.outworked/sessions/` | ✅ Works | Standard file I/O |
+| Session JSON files under `~/.papertrail/sessions/` | ✅ Works | Standard file I/O |
 
 ---
 
@@ -120,7 +120,7 @@
 | HTTP MCP server on localhost:7823 | ✅ Works | Pure Node.js HTTP, portable |
 | cloudflared URL selection | ✅ Works | Win32 x64 `.exe` URL already handled |
 | cloudflared download | 🟡 Minor fix | Uses `tar -xzf` on macOS, direct `.exe` on Windows — Windows branch already exists |
-| cloudflared binary path `~/.outworked/bin/cloudflared.exe` | ✅ Works | `.exe` suffix applied on `win32` |
+| cloudflared binary path `~/.papertrail/bin/cloudflared.exe` | ✅ Works | `.exe` suffix applied on `win32` |
 | Tunnel management | ❓ Unknown | Cloudflared on Windows may behave differently; needs runtime test |
 
 ---

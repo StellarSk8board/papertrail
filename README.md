@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="build/icon.png" alt="Outworked" width="128" />
+  <img src="build/icon.png" alt="PaperTrail" width="128" />
 </p>
 
-<h1 align="center">Outworked</h1>
+<h1 align="center">PaperTrail</h1>
 
 <p align="center">
   <strong>A desktop app that turns Claude into a team of AI employees.</strong><br/>
@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  <img src="build/demo.gif" alt="Outworked Demo" width="720" />
+  <img src="build/demo.gif" alt="PaperTrail Demo" width="720" />
 </p>
 
 ## What it is
 
-Outworked is a desktop environment for coordinating multiple Claude-powered agents with shared workspace context, local tool access, browser automation, messaging, and scheduled workflows.
+PaperTrail is a desktop environment for coordinating multiple Claude-powered agents with shared workspace context, local tool access, browser automation, messaging, and scheduled workflows.
 
-This repo is the **Windows-forward port** of Outworked. The app started macOS-first, but the current work is about making it genuinely usable on Windows instead of merely "technically buildable."
+This repo is the **Windows-forward port** of PaperTrail. The app started macOS-first, but the current work is about making it genuinely usable on Windows instead of merely "technically buildable."
 
 ## Platform status
 
@@ -88,8 +88,8 @@ When older docs or screenshots disagree, treat the Windows notes in this repo as
 ### Development
 
 ```bash
-git clone https://github.com/StellarSk8board/outworked.git
-cd outworked
+git clone https://github.com/StellarSk8board/papertrail.git
+cd papertrail
 npm install
 npm run electron:dev
 ```
@@ -124,6 +124,6 @@ Windows packaging targets NSIS. macOS and Linux packaging targets remain in the 
 
 ## Positioning
 
-Outworked is not trying to be a generic chat wrapper. It is a desktop environment for coordinating multiple Claude-powered agents with visible presence, shared workspace context, tool access, and automation workflows.
+PaperTrail is not trying to be a generic chat wrapper. It is a desktop environment for coordinating multiple Claude-powered agents with visible presence, shared workspace context, tool access, and automation workflows.
 
 The Windows port goal is simple: keep what makes the app fun, remove the macOS assumptions that break it, and make it stable enough to be worth using on Windows for real.

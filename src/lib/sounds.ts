@@ -83,8 +83,8 @@ let _desktopNotifsEnabled = true;
 /** Load cached values from SQLite (call once at startup). */
 export async function initSoundSettings(): Promise<void> {
   const [s, n] = await Promise.all([
-    getSetting("outworked_sounds"),
-    getSetting("outworked_desktop_notifs"),
+    getSetting("papertrail_sounds"),
+    getSetting("papertrail_desktop_notifs"),
   ]);
   _soundsEnabled = s !== "0";
   _desktopNotifsEnabled = n !== "0";
@@ -97,7 +97,7 @@ export function getSoundsEnabled(): boolean {
 
 export function setSoundsEnabled(enabled: boolean) {
   _soundsEnabled = enabled;
-  setSetting("outworked_sounds", enabled ? "1" : "0");
+  setSetting("papertrail_sounds", enabled ? "1" : "0");
 }
 
 /** Check if desktop notifications are enabled — sync, uses cache */
@@ -107,5 +107,5 @@ export function getDesktopNotificationsEnabled(): boolean {
 
 export function setDesktopNotificationsEnabled(enabled: boolean) {
   _desktopNotifsEnabled = enabled;
-  setSetting("outworked_desktop_notifs", enabled ? "1" : "0");
+  setSetting("papertrail_desktop_notifs", enabled ? "1" : "0");
 }

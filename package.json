@@ -1,8 +1,8 @@
 {
-  "name": "outworked",
+  "name": "papertrail",
   "version": "0.3.0",
   "description": "AI agent orchestration tool",
-  "author": "Outworked Team",
+  "author": "PaperTrail Team",
   "private": true,
   "main": "electron/main.js",
   "license": "GPL-3.0-only",

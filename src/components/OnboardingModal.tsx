@@ -125,13 +125,13 @@ export default function OnboardingModal({
             <div className="text-center">
               <div className="text-4xl mb-4">🏢</div>
               <h2 className="text-lg font-pixel text-white mb-2">
-                Welcome to Outworked
+                Welcome to PaperTrail
               </h2>
               <p className="text-sm text-slate-300 mb-1">
                 Your AI Agent Headquarters
               </p>
               <p className="text-xs text-slate-400 mb-6 max-w-sm mx-auto">
-                Outworked lets you hire, manage, and orchestrate AI agents that
+                PaperTrail lets you hire, manage, and orchestrate AI agents that
                 work on your codebase. Each agent is a Claude Code subagent with
                 its own role and personality.
               </p>
@@ -179,7 +179,7 @@ export default function OnboardingModal({
                 Step 1: Claude Code CLI
               </h2>
               <p className="text-xs text-slate-400 mb-5">
-                Outworked uses Claude Code under the hood to power your agents.
+                PaperTrail uses Claude Code under the hood to power your agents.
                 You need it installed and authenticated.
               </p>
 

@@ -1,4 +1,4 @@
-# Windows Smoke Tests — Outworked
+# Windows Smoke Tests — PaperTrail
 
 **App version:** 0.3.0
 **Platform:** Windows 10 1909+ / Windows 11
@@ -22,7 +22,7 @@ These are the minimum tests to run after any Windows build before declaring the 
 
 **Goal:** App starts without crashing.
 
-1. `git clone <repo> outworked && cd outworked`
+1. `git clone <repo> papertrail && cd papertrail`
 2. `npm install` — observe: `postinstall` runs `electron-rebuild`, should complete without errors. Accept WARN if Build Tools are absent (fallback message prints, not a crash).
 3. `npm run electron:dev`
 4. **Pass:** Main window opens, game canvas renders, no console errors mentioning "process.kill", "SIGTERM", "HOME", "imessage", or "which".
@@ -125,7 +125,7 @@ These are the minimum tests to run after any Windows build before declaring the 
 **Goal:** `npm run electron:build` produces a working NSIS installer.
 
 1. `npm run electron:build`
-2. **Pass:** `dist/Outworked Setup 0.3.0.exe` is created with no errors.
+2. **Pass:** `dist/PaperTrail Setup 0.3.0.exe` is created with no errors.
 3. Run the installer. **Pass:** App installs, shortcut appears on Desktop and in Start Menu, icon is correct (multi-res ICO, not blank/default).
 4. Launch from shortcut. **Pass:** App starts correctly.
 

@@ -1,4 +1,4 @@
-# Windows Port Audit — Outworked
+# Windows Port Audit — PaperTrail
 
 **Audit date:** 2026-03-27
 **Auditor:** Claude Code (automated deep audit)
@@ -23,7 +23,7 @@
 
 ## 1. Architecture Overview
 
-Outworked is an Electron desktop app that acts as an AI-agent orchestration shell around the Anthropic Claude Code SDK. It consists of three distinct runtime layers:
+PaperTrail is an Electron desktop app that acts as an AI-agent orchestration shell around the Anthropic Claude Code SDK. It consists of three distinct runtime layers:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -51,7 +51,7 @@ Outworked is an Electron desktop app that acts as an AI-agent orchestration shel
 | Main process | `electron/main.js` | IPC handlers, process spawning, app lifecycle, menu |
 | Preload bridge | `electron/preload.js` | `contextBridge` API exposed to renderer |
 | Claude Code SDK | `electron/sdk-bridge.js` | Wraps `@anthropic-ai/claude-agent-sdk` (ESM) |
-| SQLite database | `electron/db/database.js` | `better-sqlite3`, persists to `~/.outworked/outworked.db` |
+| SQLite database | `electron/db/database.js` | `better-sqlite3`, persists to `~/.papertrail/papertrail.db` |
 | Channel system | `electron/channels/` | iMessage (macOS-only) + Slack |
 | MCP server | `electron/mcp/mcp-server.js` | HTTP MCP on port 7823, cloudflared tunnel |
 | Skills | `electron/skills/` | Browser, Gmail, Drive, Calendar, Sheets, Notion, Slack, scheduler |
@@ -166,14 +166,14 @@ This should work on Windows if build tools are installed (MSVC or `windows-build
 
 | Path | Platform concern |
 |------|-----------------|
-| `~/.outworked/outworked.db` | Uses `os.homedir()` — safe cross-platform |
-| `~/.outworked/sessions/` | Uses `os.homedir()` — safe |
-| `~/.outworked/bin/cloudflared[.exe]` | `.exe` suffix applied on Windows in mcp-server.js — correct |
+| `~/.papertrail/papertrail.db` | Uses `os.homedir()` — safe cross-platform |
+| `~/.papertrail/sessions/` | Uses `os.homedir()` — safe |
+| `~/.papertrail/bin/cloudflared[.exe]` | `.exe` suffix applied on Windows in mcp-server.js — correct |
 | `~/.claude/settings.json` | Uses `os.homedir()` — safe |
 | `~/.claude/agents/*.md` | Uses `os.homedir()` — safe |
 | `~/Library/Messages/chat.db` | **macOS-only** — iMessage subsystem only |
 
-The hidden-directory convention (`~/.outworked`) works on Windows (Windows supports dotfiles). Electron's `app.getPath("userData")` is not used; app uses `~/.outworked` directly. This is a minor Windows UX deviation but not a blocker.
+The hidden-directory convention (`~/.papertrail`) works on Windows (Windows supports dotfiles). Electron's `app.getPath("userData")` is not used; app uses `~/.papertrail` directly. This is a minor Windows UX deviation but not a blocker.
 
 ---
 

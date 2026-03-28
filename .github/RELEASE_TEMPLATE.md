@@ -4,7 +4,7 @@ Use this section to say, in one blunt paragraph, what changed and who this relea
 
 Example:
 
-> This release improves the Windows-forward port of Outworked with better shell handling, safer process cleanup, and clearer platform-specific behavior. Suitable for beta testers on Windows 10/11 and anyone tracking the port effort.
+> This release improves the Windows-forward port of PaperTrail with better shell handling, safer process cleanup, and clearer platform-specific behavior. Suitable for beta testers on Windows 10/11 and anyone tracking the port effort.
 
 ## Platform Availability
 

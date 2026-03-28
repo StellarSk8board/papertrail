@@ -1,4 +1,4 @@
-// ─── Outworked MCP Server (Streamable HTTP) ─────────────────────
+// ─── PaperTrail MCP Server (Streamable HTTP) ────────────────────
 // Single always-running MCP server that exposes memory,
 // channel, and skill tools to Claude Code agents over HTTP.
 // Runs in the Electron main process on localhost:7823.
@@ -20,8 +20,11 @@ const verbose = process.env.VERBOSE_LOGGING === "true";
 // Active tunnels: key (port or url) → { proc, publicUrl }
 const _tunnels = new Map();
 
-// Path where we store the cloudflared binary
-const CLOUDFLARED_DIR = path.join(os.homedir(), ".outworked", "bin");
+// Path where we store the cloudflared binary.
+// database.js runs the ~/.outworked → ~/.papertrail migration before this
+// module is loaded, so the bin/ directory is guaranteed to be in the new
+// location by the time any tunnel is started.
+const CLOUDFLARED_DIR = path.join(os.homedir(), ".papertrail", "bin");
 const CLOUDFLARED_BIN = path.join(
   CLOUDFLARED_DIR,
   process.platform === "win32" ? "cloudflared.exe" : "cloudflared",
@@ -558,7 +561,7 @@ async function handleMcpRequest(msg, agentId = null, allowedRuntimes = null) {
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "outworked-skills", version: "0.2.0" },
+          serverInfo: { name: "papertrail-skills", version: "0.2.0" },
         },
       };
 

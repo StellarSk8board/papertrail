@@ -203,7 +203,7 @@ class GoogleDriveRuntime extends BaseRuntime {
     const metadata = { name, ...(folderId ? { parents: [folderId] } : {}) };
 
     // Use multipart upload for simplicity
-    const boundary = '----OutworkedUploadBoundary';
+    const boundary = '----PaperTrailUploadBoundary';
     const body = [
       `--${boundary}`,
       'Content-Type: application/json; charset=UTF-8',

@@ -1,4 +1,4 @@
-# Windows Blockers — Outworked
+# Windows Blockers — PaperTrail
 
 **Date:** 2026-03-27
 **Severity scale:** CRITICAL / HIGH / MEDIUM / LOW

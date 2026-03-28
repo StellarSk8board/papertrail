@@ -18,30 +18,30 @@ jobs:
         id: sha
         run: |
           VERSION="${{ steps.release.outputs.version }}"
-          curl -fSL -o Outworked.dmg \
-            "https://github.com/StellarSk8board/outworked/releases/download/v${VERSION}/Outworked-${VERSION}-arm64.dmg"
-          SHA=$(sha256sum Outworked.dmg | awk '{print $1}')
+          curl -fSL -o PaperTrail.dmg \
+            "https://github.com/StellarSk8board/papertrail/releases/download/v${VERSION}/PaperTrail-${VERSION}-arm64.dmg"
+          SHA=$(sha256sum PaperTrail.dmg | awk '{print $1}')
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
         with:
-          repository: outworked/homebrew-tap
+          repository: papertrail/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update cask formula
         run: |
           VERSION="${{ steps.release.outputs.version }}"
           SHA="${{ steps.sha.outputs.sha256 }}"
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/outworked.rb
-          sed -i "s/sha256 \".*\"/sha256 \"${SHA}\"/" Casks/outworked.rb
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/papertrail.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA}\"/" Casks/papertrail.rb
 
       - name: Commit and push
         run: |
           VERSION="${{ steps.release.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/outworked.rb
+          git add Casks/papertrail.rb
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "Update outworked to ${VERSION}"
+          git commit -m "Update papertrail to ${VERSION}"
           git push

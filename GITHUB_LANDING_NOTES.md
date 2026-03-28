@@ -10,7 +10,7 @@ Use:
 ### Homepage
 Point to:
 
-- `https://github.com/StellarSk8board/outworked/releases`
+- `https://github.com/StellarSk8board/papertrail/releases`
 
 That makes the landing page answer the most practical question first: where do I get the build.
 
@@ -46,7 +46,7 @@ At a glance, it should show:
 
 ### Recommended overlay text
 Keep it short:
-- `Outworked`
+- `PaperTrail`
 - `Claude-powered AI employees`
 - `Windows beta port`
 

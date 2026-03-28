@@ -1,6 +1,6 @@
 # Branching Strategy
 
-This repo is being used for an active Windows-forward port of Outworked.
+This repo is PaperTrail — a desktop app for orchestrating Claude-powered AI agents, with an active Windows-forward port.
 
 ## Branch roles
 

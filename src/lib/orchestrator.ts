@@ -666,7 +666,7 @@ async function ensureWorkingDirectory(dir: string): Promise<void> {
   if (!listing.startsWith("No files")) return;
   // Create an empty marker so the directory is created
   await writeFile(
-    `${dir}/.outworked`,
+    `${dir}/.papertrail`,
     `# Working directory created ${new Date().toISOString()}\n`,
   );
 }
@@ -961,7 +961,7 @@ ${
     // tools through the canUseTool callback which prompts the user via the UI.
     // When disabled, 'acceptEdits' auto-approves most operations.
     permissionMode:
-      (await getSetting("outworked_permission_prompts")) !== "0"
+      (await getSetting("papertrail_permission_prompts")) !== "0"
         ? "default"
         : "acceptEdits",
     // Use resume when we have an explicit session ID — don't also set continue,

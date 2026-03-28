@@ -126,9 +126,9 @@ export default function AgentEditor({
       if (result) {
         const parsed = parseSubagentFrontmatter(result.content);
         const name =
-          parsed.def["outworked-name"] || parsed.def.name || draft.name;
+          parsed.def["papertrail-name"] || parsed.def["outworked-name"] || parsed.def.name || draft.name;
         const role =
-          parsed.def["outworked-role"] || parsed.def.description || draft.role;
+          parsed.def["papertrail-role"] || parsed.def["outworked-role"] || parsed.def.description || draft.role;
         if (draft.subagentFile && result.filePath !== draft.subagentFile) {
           await deleteClaudeAgentFile(draft.subagentFile);
         }

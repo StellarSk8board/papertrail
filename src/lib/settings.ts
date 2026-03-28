@@ -61,3 +61,48 @@ export async function getSettingJSON<T>(
 export async function setSettingJSON<T>(key: string, value: T): Promise<void> {
   await setSetting(key, JSON.stringify(value));
 }
+
+/**
+ * One-time migration: rename all "outworked_*" setting keys to "papertrail_*".
+ *
+ * This runs on app startup (called from App.tsx's init effect).  It is
+ * idempotent — if the new keys already exist the old keys are still
+ * removed, and if there are no old keys to migrate it returns immediately.
+ *
+ * Why: settings were stored under the "outworked_" prefix in the SQLite
+ * app_settings table and in localStorage (fallback). Renaming them to
+ * "papertrail_" keeps the DB clean without leaving orphan rows.
+ *
+ * Safety: the old key is only deleted after the new key has been written
+ * successfully. If writing the new key throws, the old key is preserved.
+ */
+export async function migrateSettingKeys(): Promise<void> {
+  const PREFIX_OLD = "outworked_";
+  const PREFIX_NEW = "papertrail_";
+
+  const api = getAPI();
+  if (api) {
+    // SQLite path
+    const entries = await api.settingList();
+    const toMigrate = entries.filter(({ key }) => key.startsWith(PREFIX_OLD));
+    for (const { key, value } of toMigrate) {
+      const newKey = PREFIX_NEW + key.slice(PREFIX_OLD.length);
+      // Only write new key if it doesn't already exist (preserve existing value)
+      const existing = await api.settingGet(newKey);
+      if (existing === null) {
+        await api.settingSet(newKey, value);
+      }
+      await api.settingDelete(key);
+    }
+  } else {
+    // localStorage fallback (dev / web mode)
+    const oldKeys = Object.keys(localStorage).filter(k => k.startsWith(PREFIX_OLD));
+    for (const oldKey of oldKeys) {
+      const newKey = PREFIX_NEW + oldKey.slice(PREFIX_OLD.length);
+      if (localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey)!);
+      }
+      localStorage.removeItem(oldKey);
+    }
+  }
+}

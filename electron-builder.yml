@@ -1,5 +1,5 @@
-appId: com.outworked.app
-productName: Outworked
+appId: com.papertrail.app
+productName: PaperTrail
 icon: build/icon.png
 directories:
   output: dist
@@ -18,8 +18,8 @@ asarUnpack:
 npmRebuild: true
 publish:
   provider: github
-  owner: outworked
-  repo: outworked
+  owner: StellarSk8board
+  repo: papertrail
   private: false
 mac:
   icon: build/icon.icns
@@ -47,4 +47,4 @@ nsis:
   perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Outworked
+  shortcutName: PaperTrail

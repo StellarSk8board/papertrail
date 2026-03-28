@@ -10,7 +10,11 @@ const MAX_WINDOWS = 3;
 
 // Shared session partition for all browse windows — keeps cookies/storage
 // isolated from the main app and lets us strip CSP once for all browse windows.
-const BROWSE_PARTITION = "persist:outworked-browse";
+// Note: changing this partition name clears any cookies/storage previously
+// accumulated under "persist:outworked-browse". Browser-skill users will
+// need to re-authenticate to sites accessed through the browser skill.
+// Primary user data (agents, settings, sessions) is unaffected.
+const BROWSE_PARTITION = "persist:papertrail-browse";
 
 // Milliseconds to wait after navigation for dynamic content to settle
 const NAVIGATE_SETTLE_MS = 2000;
@@ -635,11 +639,11 @@ class BrowserRuntime extends BaseRuntime {
     const bannerText = message;
     await win.webContents.executeJavaScript(`
       (() => {
-        const existing = document.getElementById('__outworked_banner');
+        const existing = document.getElementById('__papertrail_banner');
         if (existing) existing.remove();
 
         const banner = document.createElement('div');
-        banner.id = '__outworked_banner';
+        banner.id = '__papertrail_banner';
         banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:#4f46e5;color:white;font-family:-apple-system,system-ui,sans-serif;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
 
         const label = document.createElement('span');
@@ -651,7 +655,7 @@ class BrowserRuntime extends BaseRuntime {
         btn.style.cssText = 'margin-left:16px;padding:6px 20px;background:white;color:#4f46e5;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;';
         btn.onmouseover = () => btn.style.background = '#e0e7ff';
         btn.onmouseout  = () => btn.style.background = 'white';
-        btn.onclick = () => { document.title = '__outworked_done'; };
+        btn.onclick = () => { document.title = '__papertrail_done'; };
         banner.appendChild(btn);
 
         document.body.prepend(banner);
@@ -663,7 +667,7 @@ class BrowserRuntime extends BaseRuntime {
 
     const finalUrl = await new Promise((resolve) => {
       const onTitle = (_event, title) => {
-        if (title === "__outworked_done") {
+        if (title === "__papertrail_done") {
           win.webContents.removeListener("page-title-updated", onTitle);
           resolve(win.webContents.getURL());
         }
@@ -675,7 +679,7 @@ class BrowserRuntime extends BaseRuntime {
     if (finalUrl !== null && !win.isDestroyed()) {
       await win.webContents.executeJavaScript(`
         (() => {
-          const b = document.getElementById('__outworked_banner');
+          const b = document.getElementById('__papertrail_banner');
           if (b) b.remove();
         })()
       `);

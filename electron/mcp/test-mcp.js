@@ -60,10 +60,10 @@ async function run() {
   try {
     const res = await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
     assert("returns protocolVersion", res.result?.protocolVersion === "2024-11-05");
-    assert("server name is outworked-skills", res.result?.serverInfo?.name === "outworked-skills");
+    assert("server name is papertrail-skills", res.result?.serverInfo?.name === "papertrail-skills");
   } catch (e) {
     console.log(`  ✗ Connection failed: ${e.message}`);
-    console.log("  → Is the Outworked app running?");
+    console.log("  → Is the PaperTrail app running?");
     failed++;
     return;
   }
