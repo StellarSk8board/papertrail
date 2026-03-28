@@ -5,117 +5,80 @@
 <h1 align="center">Outworked</h1>
 
 <p align="center">
-  <strong>Outworked is a desktop app that turns Claude into a team of AI employees.<br/>
-  Hire agents. Give them roles. Watch them write code, interact with the web, send messages,<br/>
-  and run scheduled tasks from a living pixel office on your desktop.</strong>
+  <strong>A desktop app that turns Claude into a team of AI employees.</strong><br/>
+  Hire agents. Give them roles. Watch them code, browse, message, and run scheduled work from a living pixel office on your desktop.
 </p>
-<p align="center">
-  <em>Claude Code with a can-do attitude.</em>
-</p>
-
----
 
 <p align="center">
   <img src="build/demo.gif" alt="Outworked Demo" width="720" />
 </p>
 
----
+## What it is
 
-<p align="center">
-  <a href="https://github.com/StellarSk8board/outworked/releases/"><strong>Download</strong></a> ·
-  <a href="#platform-status"><strong>Platform Status</strong></a> ·
-  <a href="#how-it-works"><strong>How It Works</strong></a> ·
-  <a href="#capabilities"><strong>Capabilities</strong></a> ·
-  <a href="#windows-status"><strong>Windows Status</strong></a> ·
-  <a href="#build-from-source"><strong>Build from Source</strong></a>
-</p>
+Outworked is a desktop environment for coordinating multiple Claude-powered agents with shared workspace context, local tool access, browser automation, messaging, and scheduled workflows.
 
----
+This repo is the **Windows-forward port** of Outworked. The app started macOS-first, but the current work is about making it genuinely usable on Windows instead of merely "technically buildable."
 
-## Platform Status
+## Platform status
 
-Outworked started as a macOS-first Electron app and is now being actively ported to Windows.
-
-**Current status:**
 - **Windows:** active port, ready for limited beta testing
 - **macOS:** original target platform
 - **Linux:** packaging target exists, not yet treated as a primary platform
 
-This repo is for the Windows-forward port effort. Some docs, screenshots, and feature examples still reflect the original macOS version. Where platform behavior differs, the Windows notes below are the source of truth.
+When older docs or screenshots disagree, treat the Windows notes in this repo as the source of truth.
 
----
+## How it works
 
-## How It Works
+1. **Hire agents** with names, roles, personalities, and models
+2. **Describe a goal** in plain English
+3. **Let the orchestrator split the work** across the right agents
+4. **Watch them do it** in the office while using real tools
+5. **Ship the result** without babysitting every step
 
-1. **Hire agents** — Give each one a name, role, personality, model, and sprite
-2. **Describe a goal** — Write what you want in plain English; the orchestrator breaks it into subtasks and routes them to the right agents automatically
-3. **Watch them work** — Agents walk to their desks, write code, interact with the web, send messages, and run scheduled jobs in a visible office
-4. **Ship it** — Let your agents handle the workflow end to end
+## What agents can do
 
----
+- **Write and ship code** across multiple repos
+- **Browse the web** for research, screenshots, and form-filling
+- **Send messages** through supported channels
+- **Run on schedules** with cron, intervals, and one-off triggers
+- **Query databases** through MCP-backed tools
+- **Manage project workflows** like issues, tickets, and summaries
+- **Extend through MCP** so internal tools and APIs become part of the office
 
-## Capabilities
+## Core features
 
-**Write and ship code** — Build features, fix bugs, open PRs, review each other's work, run tests, and deploy across multiple repos.
+- **Pixel Office** powered by Phaser
+- **Multi-agent orchestration** with shared context
+- **Claude Code integration** with persistent sessions
+- **Built-in browser** for real web interaction
+- **Triggers and scheduling** for background automation
+- **SQLite storage** for local persistence
+- **Permission gates** for sensitive actions
+- **Built-in Git and file browser** for workspace visibility
+- **Background mode and notifications** so work keeps moving
 
-**Browse the web** — Research docs, scrape pages, fill out forms, take screenshots, and bring findings back through the built-in browser.
+## Windows notes
 
-**Send and receive messages** — Reply to customers on Slack and other connected channels, or monitor a channel and trigger tasks when someone says the magic word.
-
-**Run on a schedule** — Daily standups, weekly reports, hourly health checks, one-off reminders. Set a cron and let an agent handle it.
-
-**Query databases** — Connect a PostgreSQL MCP server and let agents run queries, generate reports, or investigate production issues.
-
-**Manage projects** — Create and triage GitHub issues, update Linear tickets, post status updates to Slack, and own real workflow instead of just code generation.
-
-**Extend with MCP** — Every MCP server you add gives agents new capabilities. Internal APIs, monitoring dashboards, CMS tools, or anything with a tool interface can become part of the office.
-
----
-
-## Features
-
-- **Pixel Office** — A Phaser-powered world where your agents walk, sit at desks, and collaborate in real time
-- **Build a Team** — Give each agent a name, role, personality, model, and sprite
-- **Auto-Orchestration** — Describe a goal; the router breaks it into tasks and assigns them to the right agents
-- **Multi-Agent Collaboration** — Agents talk to each other via a shared message bus
-- **Claude Code Power** — Agents get local tool access with persistent sessions
-- **MCP Server Support** — Connect agents to external tools and services
-- **Messaging Channels** — Slack today, platform-specific channels where supported
-- **Built-in Browser** — Chromium for navigation, forms, and screenshots
-- **Triggers & Scheduling** — Cron, interval, one-time, and message-driven execution
-- **SQLite Storage** — Local persistence for settings, channels, and history
-- **Permission Gates** — Real-time approval UI for sensitive actions
-- **Built-in Git** — Status, branches, and PR-oriented workflows without leaving the app
-- **File Browser** — Live-updating workspace tree
-- **Cost Dashboard** — Track spend per agent, session, and day
-- **Background Mode** — Let agents keep working while the app is minimized
-
----
-
-## Windows Status
-
-### What works well in the port
+### What already looks good
 - Electron shell and renderer architecture
 - Windows process spawning and cleanup
 - Claude CLI discovery on Windows
 - `better-sqlite3` rebuild path for packaging
 - Windows icon / NSIS packaging configuration
-- Platform capability gating for macOS-only features like iMessage
+- Platform gating for macOS-only features like iMessage
 
 ### What to expect in beta
-- Windows is **beta**, not GA
-- Some macOS-oriented copy and examples may still exist elsewhere in the app or docs
-- Code signing is not configured yet, so SmartScreen warnings are expected on first run
-- Real-world Windows smoke testing is still the thing that matters most
+- Windows is still **beta**, not GA
+- Some older app copy and docs may still reflect the macOS origin
+- Code signing is not configured yet, so SmartScreen warnings are expected
+- Real Windows smoke testing matters more than static optimism
 
-### Platform-specific notes
-- **iMessage is macOS-only** and is disabled on Windows
-- Windows shell execution uses `cmd.exe` / Windows-native handling where needed
-- If native module rebuilds fail locally, install the required Windows build tools and rerun install/build
+### Platform-specific reality
+- **iMessage is macOS-only** and disabled on Windows
+- Windows shell execution uses Windows-native handling where needed
+- Native module builds may require Visual Studio Build Tools on some systems
 
----
-
-## Build from Source
+## Build from source
 
 ### Prerequisites
 - Node.js installed
@@ -137,36 +100,30 @@ npm run electron:dev
 npm run electron:build
 ```
 
-Windows packaging targets NSIS. macOS and Linux packaging targets remain in the build config as well.
-
----
+Windows packaging targets NSIS. macOS and Linux packaging targets remain in the build config.
 
 ## Scripts
 
-| Command                  | Description |
-| ------------------------ | ----------- |
-| `npm run dev`            | Start Vite dev server (renderer only) |
-| `npm run electron:dev`   | Build and launch the Electron app in dev mode |
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start Vite dev server (renderer only) |
+| `npm run electron:dev` | Build and launch the Electron app in dev mode |
 | `npm run electron:build` | Package distributables |
-| `npm run generate-ico`   | Regenerate the Windows `.ico` from the PNG source |
+| `npm run generate-ico` | Regenerate the Windows `.ico` from the PNG source |
 
----
+## Tech stack
 
-## Tech Stack
-
-| Layer    | Technology |
-| -------- | ---------- |
-| Desktop  | Electron |
+| Layer | Technology |
+| --- | --- |
+| Desktop | Electron |
 | Frontend | React 19 + TypeScript + Tailwind CSS |
-| Build    | Vite |
+| Build | Vite |
 | Graphics | Phaser 3 |
-| Storage  | SQLite (`better-sqlite3`) |
-| AI       | Claude Code SDK |
+| Storage | SQLite (`better-sqlite3`) |
+| AI | Claude Code SDK |
 
----
-
-## Project Positioning
+## Positioning
 
 Outworked is not trying to be a generic chat wrapper. It is a desktop environment for coordinating multiple Claude-powered agents with visible presence, shared workspace context, tool access, and automation workflows.
 
-The Windows port goal is simple: keep what makes the app fun and useful, remove the macOS assumptions that break it, and get it stable enough to be genuinely usable on Windows instead of merely "technically buildable."
+The Windows port goal is simple: keep what makes the app fun, remove the macOS assumptions that break it, and make it stable enough to be worth using on Windows for real.
