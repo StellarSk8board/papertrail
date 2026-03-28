@@ -13,16 +13,6 @@
   <em>Claude Code with a can-do attitude.</em>
 </p>
 
-<p align="center">
-  <a href="https://github.com/StellarSk8board/outworked/releases"><strong>Download beta builds</strong></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/StellarSk8board/outworked/releases"><img src="https://img.shields.io/badge/version-windows%20port%20beta-green.svg" alt="Version" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%203.0-blue.svg" alt="License: GPL-3.0" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20beta%20%C2%B7%20macOS-lightgrey.svg" alt="Platform" />
-</p>
-
 ---
 
 <p align="center">
