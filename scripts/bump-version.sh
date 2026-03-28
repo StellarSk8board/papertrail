@@ -7,12 +7,10 @@ set -e
 
 VERSION=$(node -p "require('./package.json').version")
 
-# README.md — update badge, download link, and release tag references
+# README.md — update generic release tag references
 sed -i '' \
-  -e "s|version-[0-9]*\.[0-9]*\.[0-9]*-green|version-${VERSION}-green|g" \
   -e "s|releases/tag/v[0-9]*\.[0-9]*\.[0-9]*|releases/tag/v${VERSION}|g" \
   -e "s|releases/download/v[0-9]*\.[0-9]*\.[0-9]*/Outworked-[0-9]*\.[0-9]*\.[0-9]*|releases/download/v${VERSION}/Outworked-${VERSION}|g" \
-  -e "s|Download_for_macOS-v[0-9]*\.[0-9]*\.[0-9]*|Download_for_macOS-v${VERSION}|g" \
   README.md
 
 # RELEASE_TEMPLATE.md — update version in download links and filenames

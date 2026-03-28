@@ -19,7 +19,7 @@ jobs:
         run: |
           VERSION="${{ steps.release.outputs.version }}"
           curl -fSL -o Outworked.dmg \
-            "https://github.com/outworked/outworked/releases/download/v${VERSION}/Outworked-${VERSION}-arm64.dmg"
+            "https://github.com/StellarSk8board/outworked/releases/download/v${VERSION}/Outworked-${VERSION}-arm64.dmg"
           SHA=$(sha256sum Outworked.dmg | awk '{print $1}')
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
 
